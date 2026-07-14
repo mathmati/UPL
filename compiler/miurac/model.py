@@ -819,6 +819,8 @@ def _validate(app: App):
                 if step.by:
                     _expect(step.by in user_bindings, cpath, f"(by {step.by}): no prior (user {step.by} role) step")
                 action = app.action(step.action)
+                if action is None and isinstance(step, StepFail):
+                    action = app.query(step.action)  # (fail query ...) asserts the query is rejected
                 _expect(action is not None, cpath, f"unknown action '{step.action}'")
                 _check_step_args(action, step.args, "do" if isinstance(step, StepDo) else "fail")
                 if isinstance(step, StepDo):

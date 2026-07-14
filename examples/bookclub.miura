@@ -1,0 +1,109 @@
+(miura 0.1
+  (intent "A book club voting app: members sign up (the first becomes organizer, the rest are readers), any signed-in member can suggest a book with a unique title, upvote suggestions, and withdraw suggestions they own; the organizer can withdraw any suggestion. Anonymous visitors can see and do nothing.")
+
+  (auth
+    (roles organizer reader)
+    (default-role reader)
+    (first-user-role organizer))
+
+  (schema
+    (entity Suggestion
+      (field id (id) (auto))
+      (field title (text) (unique) (require (and (>= (len title) 1) (<= (len title) 150))))
+      (field owner (ref User) (auto @user))
+      (field votes (int) (default 0))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action suggest_book
+      (input (title text))
+      (allow signed-in)
+      (requires (and (>= (len title) 1) (<= (len title) 150)))
+      (effect (insert Suggestion (title title)))
+      (ensures (= (. result title) title))
+      (ensures (= (. result votes) 0)))
+
+    (action vote_book
+      (input (id id))
+      (allow signed-in)
+      (effect (update Suggestion id (votes (+ (. current votes) 1))))
+      (ensures (= (. result votes) (+ (. current votes) 1))))
+
+    (action withdraw_book
+      (input (id id))
+      (allow (owner owner))
+      (allow (role organizer))
+      (effect (delete Suggestion id)))
+
+    (query list_suggestions
+      (allow signed-in)
+      (from Suggestion)
+      (order-by votes desc))
+
+    (query my_suggestions
+      (allow signed-in)
+      (from Suggestion)
+      (where (= owner @user))
+      (order-by votes desc)))
+
+  (ui
+    (page home "/"
+      (heading "Book Club Voting")
+      (form
+        (action suggest_book)
+        (field title (label "Suggest a book")))
+      (heading "All suggestions")
+      (list
+        (query list_suggestions)
+        (item
+          (text title)
+          (text votes)
+          (button (label "Vote") (action vote_book (id id)))
+          (button (label "Withdraw") (action withdraw_book (id id)))))
+      (heading "My suggestions")
+      (list
+        (query my_suggestions)
+        (item
+          (text title)
+          (text votes)
+          (button (label "Withdraw") (action withdraw_book (id id)))))))
+
+  (tests
+    (case ownership_and_organizer_override
+      (user alice organizer)
+      (user bob reader)
+      (do suggest_book (title "Alice's Book") (by alice) (as a))
+      (fail withdraw_book (id (. a id)) (by bob))
+      (do suggest_book (title "Bob's Book") (by bob) (as b))
+      (do withdraw_book (id (. b id)) (by alice))
+      (check list_suggestions (by alice) (expect (= (len result) 1))))
+
+    (case anonymous_lockout
+      (user alice organizer)
+      (fail suggest_book (title "Anon Book"))
+      (do suggest_book (title "Real Book") (by alice) (as a))
+      (fail vote_book (id (. a id)))
+      (fail withdraw_book (id (. a id)))
+      (fail list_suggestions)
+      (fail my_suggestions))
+
+    (case duplicate_title_rejected
+      (user alice organizer)
+      (do suggest_book (title "Same Title") (by alice) (as a))
+      (fail suggest_book (title "Same Title") (by alice)))
+
+    (case my_suggestions_scoping
+      (user alice organizer)
+      (user bob reader)
+      (do suggest_book (title "Alice Book") (by alice))
+      (do suggest_book (title "Bob Book") (by bob))
+      (check my_suggestions (by alice)
+        (expect (= (len result) 1))
+        (row 0 (as r))
+        (expect (= (. r title) "Alice Book"))))
+
+    (case vote_increments_by_one
+      (user alice organizer)
+      (do suggest_book (title "Votable Book") (by alice) (as a))
+      (do vote_book (id (. a id)) (by alice)
+        (expect (= (. result votes) 1))))))

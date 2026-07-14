@@ -97,3 +97,22 @@ documentation gaps. All were addressed:
   feature v0.1 lacks (relations) to observe failure behavior, (b) a
   maintenance round — hand the passing bundle back with a change
   request, (c) same test on a smaller/open-weights model.
+
+---
+
+## Addendum: the v0.4 auth dialect (same day)
+
+Same protocol, new dialect: a Sonnet agent, guide-only, authored a book
+club voting app exercising the entire auth surface — two roles with
+first-user-organizer, ownership plus organizer-override on withdrawal
+(OR'd allow rules), unique titles, exact-increment vote ensures,
+anonymous lockout, and `@user`-scoped views, tested with `(user ...)`/
+`(by ...)` permission-matrix cases.
+
+**Result: 1 repair round, and the error was not auth-related** (the
+already-known "use `result` within the same step as `(as ...)`" slip).
+Every auth construct was correct first-shot. Feedback produced: an
+explicit same-step-binding rule in the guide, a query-scoped `@user`
+example, and one small language addition — `(fail query)` steps, so
+"anonymous can see nothing" is directly assertable (adopted into
+`examples/bookclub.miura`).

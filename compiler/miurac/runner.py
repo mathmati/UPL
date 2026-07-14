@@ -108,7 +108,7 @@ def _run_step(module, step, env, result: CaseResult, i: int):
         if step.bind:
             env[step.bind] = row
     elif isinstance(step, StepFail):
-        fn = getattr(module, f"action_{step.action}")
+        fn = getattr(module, f"action_{step.action}", None) or getattr(module, f"query_{step.action}")
         try:
             fn(_step_args(step, env), _step_ctx(step, env))
         except (module.ContractViolation, module.PermissionDenied):

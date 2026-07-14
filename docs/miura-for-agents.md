@@ -144,6 +144,8 @@ Rules:
 - Queries: one `(from Entity)`, optional `(where expr)` over bare field names,
   optional `(order-by field asc|desc)`. `order-by` works on any field type
   (text sorts lexicographically, so alphabetical listings are fine).
+- In auth apps, `@user` works in a query `where` exactly as in actions:
+  `(query my_tasks (allow signed-in) (from Task) (where (= owner @user)))`.
 - **Parameterized queries**: a query may declare `(input (name type)...)` and
   use those names in its `where` — this is how you scope rows to a parent,
   e.g. "comments for one post":
@@ -249,9 +251,13 @@ Rules:
 - `(do action (input value)... (as name) (expect expr)...)` — runs an action.
   `(as t)` binds the result row; later steps reference it as `(. t field)`.
   `expect` sees `result` (this step's row) plus earlier bindings.
-- `(fail action (input value)...)` — asserts the action is **rejected by a
-  contract** (an action `requires` or a field `require` — both count).
-  If it succeeds, the case fails.
+  **Within the same step, always use `result` — the `(as t)` binding only
+  exists for *later* steps.**
+- `(fail target (input value)...)` — asserts the target is **rejected**: by
+  a contract (`requires` / field `require`) or by a permission rule. The
+  target may be an action or a query — `(fail my_tasks)` with no `(by ...)`
+  asserts anonymous callers can't run that query. If it succeeds, the case
+  fails.
 - `(check query part...)` — runs a query. For a parameterized query, pass its
   inputs: `(check (comments_for_post (post_id (. p id))) (expect ...))`.
   Parts are processed in order:
