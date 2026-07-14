@@ -36,4 +36,21 @@
         (item
           (checkbox (bind done) (action toggle_task (id id)))
           (text title)
-          (button (label "Delete") (action delete_task (id id))))))))
+          (button (label "Delete") (action delete_task (id id)))))))
+  (tests
+    (case lifecycle
+      (do create_task (title "write the compiler") (as t)
+        (expect (= (. result title) "write the compiler"))
+        (expect (= (. result done) false)))
+      (do toggle_task (id (. t id)) (expect (= (. result done) true)))
+      (do toggle_task (id (. t id)) (expect (= (. result done) false)))
+      (check list_tasks (expect (= (len result) 1)))
+      (do delete_task (id (. t id)))
+      (check list_tasks (expect (= (len result) 0))))
+    (case contracts_reject_bad_titles
+      (fail create_task (title ""))
+      (check list_tasks (expect (= (len result) 0))))
+    (case newest_first
+      (do create_task (title "older") (as a))
+      (do create_task (title "newer"))
+      (check list_tasks (expect (= (len result) 2))))))

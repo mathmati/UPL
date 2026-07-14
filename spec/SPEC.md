@@ -34,10 +34,13 @@ Comments: `;` to end of line.
   (intent "one paragraph of natural-language intent")
   (schema (entity ...) ...)
   (workflow (action ...) (query ...) ...)
-  (ui (page ...) ...))
+  (ui (page ...) ...)
+  (tests (case ...) ...))
 ```
 
-All four sections are required, each exactly once.
+The first four sections are required, each exactly once; `tests` is
+optional (but a bundle without tests can't self-verify — always include
+it in practice).
 
 ### schema
 
@@ -126,6 +129,31 @@ Item components (rendered per row):
 Component/action arg lists must supply every input of the referenced
 action; args pull values from the current row's fields.
 
+### tests
+
+Acceptance cases carried by the bundle itself; `uplc test` runs them
+against the bundle's own unpacked Python target (each case on a fresh
+database), so the bundle is self-verifying.
+
+```
+(case name step...)
+```
+
+Steps:
+
+- `(do action (input value)... (as name) (expect expr)...)` — run an
+  action. Values are literals or `(. binding field)`. `(as name)` binds
+  the result row for later steps. Each `expect` sees `result` (this
+  step's row) plus all earlier bindings. A contract rejection fails the
+  case.
+- `(fail action (input value)...)` — assert the action is rejected by a
+  contract (requires / field require). Success fails the case.
+- `(check query (expect expr)...)` — run a query; `result` is the row
+  list (`(len result)` counts it).
+
+All names (actions, queries, inputs, bindings) are resolved at compile
+time; input lists must be covered exactly.
+
 ## Unpacking
 
 `python -m uplc unpack app.upl -o build` writes:
@@ -141,6 +169,15 @@ query → `GET /api/<name>`, page routes serve the HTML.
 
 Environment: `UPL_PORT` (default 8000), `UPL_DB` (default
 `server/app.db`).
+
+## CLI
+
+| Command | Purpose |
+|---|---|
+| `uplc check bundle [--json]` | parse + validate; JSON diagnostics carry a `path` into the bundle |
+| `uplc fmt bundle [--write]` | canonical form |
+| `uplc test bundle [--json]` | run the bundle's `(tests ...)` cases against its unpacked app |
+| `uplc unpack bundle -o dir` | write server/web/db targets |
 
 ## Not in v0.1 (deliberately)
 

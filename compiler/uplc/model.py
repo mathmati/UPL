@@ -134,12 +134,39 @@ class Page:
 
 
 @dataclass
+class StepDo:
+    action: str
+    args: list  # [(input_name, value_expr, src)]
+    bind: str = ""  # (as name) — binds the result row
+    expects: list = dc_field(default_factory=list)  # [(expr, src)]
+
+
+@dataclass
+class StepFail:
+    action: str
+    args: list  # [(input_name, value_expr, src)]
+
+
+@dataclass
+class StepCheck:
+    query: str
+    expects: list  # [(expr, src)]
+
+
+@dataclass
+class TestCase:
+    name: str
+    steps: list
+
+
+@dataclass
 class App:
     intent: str
     entities: list
     actions: list
     queries: list
     pages: list
+    tests: list = dc_field(default_factory=list)
     canonical: str = ""
     bundle_hash: str = ""
 
@@ -201,10 +228,11 @@ def _load_tree(tree) -> App:
     path = "bundle"
     _expect(isinstance(tree, list) and len(tree) >= 2 and tree[0] == Sym("upl"), path, "bundle must start with (upl 0.1 ...)")
     _expect(str(tree[1]) == "0.1", path, f"unsupported version {tree[1]!r}, expected 0.1")
-    sections = _sections(tree[2:], path, ["intent", "schema", "workflow", "ui"])
+    sections = _sections(tree[2:], path, ["intent", "schema", "workflow", "ui", "tests"])
     for required in ("intent", "schema", "workflow", "ui"):
         _expect(required in sections, path, f"missing ({required} ...) section")
-        _expect(len(sections[required]) == 1, path, f"duplicate ({required} ...) section")
+    for name in sections:
+        _expect(len(sections[name]) == 1, path, f"duplicate ({name} ...) section")
 
     intent = _str(sections["intent"][0][1] if len(sections["intent"][0]) == 2 else None, "intent", "intent")
 
@@ -216,7 +244,11 @@ def _load_tree(tree) -> App:
 
     pages = [_load_page(p) for p in _sections(sections["ui"][0][1:], "ui", ["page"]).get("page", [])]
 
-    return App(intent=intent, entities=entities, actions=actions, queries=queries, pages=pages)
+    tests = []
+    if "tests" in sections:
+        tests = [_load_case(c) for c in _sections(sections["tests"][0][1:], "tests", ["case"]).get("case", [])]
+
+    return App(intent=intent, entities=entities, actions=actions, queries=queries, pages=pages, tests=tests)
 
 
 def _load_entity(node) -> Entity:
@@ -409,6 +441,57 @@ def _load_page(node) -> Page:
     return Page(name=name, route=route, components=[_load_component(c, path) for c in node[3:]])
 
 
+def _load_case(node) -> TestCase:
+    path = "tests"
+    _expect(len(node) >= 3, path, "(case name step...) needs a name and at least one step")
+    name = _sym(node[1], path, "case name")
+    path = f"case {name}"
+    steps = []
+    for s in node[2:]:
+        _expect(isinstance(s, list) and s and isinstance(s[0], Sym), path, f"bad step {dumps(s)}")
+        kind = str(s[0])
+        if kind in ("do", "fail"):
+            _expect(len(s) >= 2, path, f"({kind} action ...) needs an action name")
+            action = _sym(s[1], path, "action")
+            args, bind, expects = [], "", []
+            for part in s[2:]:
+                _expect(isinstance(part, list) and part and isinstance(part[0], Sym), path, f"bad step part {dumps(part)}")
+                key = str(part[0])
+                if key == "as":
+                    _expect(kind == "do" and len(part) == 2, path, "(as name) applies to do steps only")
+                    bind = _sym(part[1], path, "binding name")
+                elif key == "expect":
+                    _expect(kind == "do" and len(part) == 2, path, "(expect expr) applies to do steps only")
+                    try:
+                        expects.append((E.parse_expr(part[1]), E.to_source(part[1])))
+                    except E.ExprError as err:
+                        raise BundleError(path, str(err))
+                else:
+                    _expect(len(part) == 2, path, f"action arg must be (input value): {dumps(part)}")
+                    try:
+                        args.append((key, E.parse_expr(part[1]), E.to_source(part[1])))
+                    except E.ExprError as err:
+                        raise BundleError(path, str(err))
+            if kind == "do":
+                steps.append(StepDo(action=action, args=args, bind=bind, expects=expects))
+            else:
+                steps.append(StepFail(action=action, args=args))
+        elif kind == "check":
+            _expect(len(s) >= 2, path, "(check query (expect expr)...) needs a query name")
+            query = _sym(s[1], path, "query")
+            expects = []
+            for part in s[2:]:
+                _expect(isinstance(part, list) and len(part) == 2 and part[0] == Sym("expect"), path, f"check only takes (expect expr): {dumps(part)}")
+                try:
+                    expects.append((E.parse_expr(part[1]), E.to_source(part[1])))
+                except E.ExprError as err:
+                    raise BundleError(path, str(err))
+            steps.append(StepCheck(query=query, expects=expects))
+        else:
+            raise BundleError(path, f"unknown step '{kind}' (allowed: do, fail, check)")
+    return TestCase(name=name, steps=steps)
+
+
 # ---------------------------------------------------------------- validation
 
 
@@ -499,6 +582,44 @@ def _validate(app: App):
             for base, fname in E.field_refs(expr):
                 if base in ("result", "current"):
                     _expect(fname in fields, apath, f"ensures references unknown field (. {base} {fname})")
+
+    seen = set()
+    for case in app.tests:
+        cpath = f"case {case.name}"
+        _expect(case.name not in seen, cpath, "duplicate case name")
+        seen.add(case.name)
+        bound = set()
+
+        def _check_step_args(action, args, what):
+            inames = {n for n, _ in action.inputs}
+            given = set()
+            for arg_name, value_expr, src in args:
+                _expect(arg_name in inames, cpath, f"{what} arg '{arg_name}' is not an input of '{action.name}'")
+                _expect(arg_name not in given, cpath, f"{what} supplies arg '{arg_name}' twice")
+                given.add(arg_name)
+                bad = E.free_names(value_expr) - bound
+                _expect(not bad, cpath, f"{what} value references unbound names: {', '.join(sorted(bad))} in {src}")
+            _expect(given == inames, cpath, f"{what} must supply all inputs of '{action.name}': missing {', '.join(sorted(inames - given))}")
+
+        for step in case.steps:
+            if isinstance(step, (StepDo, StepFail)):
+                action = app.action(step.action)
+                _expect(action is not None, cpath, f"unknown action '{step.action}'")
+                _check_step_args(action, step.args, "do" if isinstance(step, StepDo) else "fail")
+                if isinstance(step, StepDo):
+                    for expr, src in step.expects:
+                        bad = E.free_names(expr) - bound - {"result"}
+                        _expect(not bad, cpath, f"expect references unbound names: {', '.join(sorted(bad))} in {src}")
+                    if step.bind:
+                        _expect(step.bind not in ("result", "current"), cpath, "binding may not be named 'result' or 'current'")
+                        _expect(step.bind not in bound, cpath, f"binding '{step.bind}' already used")
+                        bound.add(step.bind)
+            else:  # StepCheck
+                query = app.query(step.query)
+                _expect(query is not None, cpath, f"unknown query '{step.query}'")
+                for expr, src in step.expects:
+                    bad = E.free_names(expr) - bound - {"result"}
+                    _expect(not bad, cpath, f"expect references unbound names: {', '.join(sorted(bad))} in {src}")
 
     _expect(app.pages, "ui", "at least one page is required")
     seen_routes = set()

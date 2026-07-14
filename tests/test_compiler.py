@@ -77,6 +77,43 @@ class TestLoad(unittest.TestCase):
         self.assert_error(bad, "must assign field 'done'")
 
 
+class TestBundleTests(unittest.TestCase):
+    def run_bundle(self, text):
+        from uplc.runner import run_tests
+        return run_tests(load(text))
+
+    def test_example_cases_pass(self):
+        results = self.run_bundle(read_example())
+        self.assertEqual([r.name for r in results], ["lifecycle", "contracts_reject_bad_titles", "newest_first"])
+        self.assertTrue(all(r.ok for r in results), [r.failures for r in results])
+
+    def test_failing_expect_is_reported(self):
+        bad = read_example().replace('(expect (= (. result done) false))', '(expect (= (. result done) true))', 1)
+        results = self.run_bundle(bad)
+        lifecycle = results[0]
+        self.assertFalse(lifecycle.ok)
+        self.assertIn("expect failed", lifecycle.failures[0])
+
+    def test_fail_step_that_succeeds_is_reported(self):
+        bad = read_example().replace('(fail create_task (title ""))', '(fail create_task (title "valid title"))')
+        results = self.run_bundle(bad)
+        case = next(r for r in results if r.name == "contracts_reject_bad_titles")
+        self.assertFalse(case.ok)
+        self.assertIn("expected a contract rejection", case.failures[0])
+
+    def test_unknown_action_in_case_is_compile_error(self):
+        bad = read_example().replace("(do toggle_task (id (. t id)) (expect (= (. result done) true)))", "(do missing_action (id (. t id)))")
+        with self.assertRaises(BundleError) as ctx:
+            load(bad)
+        self.assertIn("unknown action 'missing_action'", str(ctx.exception))
+
+    def test_unbound_binding_is_compile_error(self):
+        bad = read_example().replace("(do toggle_task (id (. t id)) (expect (= (. result done) true)))", "(do toggle_task (id (. ghost id)))")
+        with self.assertRaises(BundleError) as ctx:
+            load(bad)
+        self.assertIn("unbound names: ghost", str(ctx.exception))
+
+
 class TestUnpack(unittest.TestCase):
     def unpack(self, out_dir):
         env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "compiler"))

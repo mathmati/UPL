@@ -1,8 +1,12 @@
-"""The uplc command line: check, fmt, unpack."""
+"""The uplc command line: check, fmt, unpack, test.
+
+check/test accept --json for machine-readable output, so an agent
+loop can repair from structured diagnostics."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -10,9 +14,10 @@ from .emit_python import emit_python
 from .emit_sql import emit_sql
 from .emit_web import emit_web
 from .model import BundleError, load
+from .runner import run_tests
 from .sexpr import ParseError, dumps, parse
 
-VERSION = "0.1"
+VERSION = "0.2"
 
 
 def _load_file(path: str):
@@ -30,8 +35,19 @@ def _header(app, src_path: str) -> str:
 
 def cmd_check(args) -> int:
     app = _load_file(args.bundle)
-    print(f"ok: {len(app.entities)} entities, {len(app.actions)} actions, {len(app.queries)} queries, {len(app.pages)} pages")
-    print(f"bundle sha256: {app.bundle_hash}")
+    if args.json:
+        print(json.dumps({
+            "ok": True,
+            "bundle_sha256": app.bundle_hash,
+            "entities": [e.name for e in app.entities],
+            "actions": [a.name for a in app.actions],
+            "queries": [q.name for q in app.queries],
+            "pages": [p.name for p in app.pages],
+            "test_cases": [c.name for c in app.tests],
+        }))
+    else:
+        print(f"ok: {len(app.entities)} entities, {len(app.actions)} actions, {len(app.queries)} queries, {len(app.pages)} pages, {len(app.tests)} test cases")
+        print(f"bundle sha256: {app.bundle_hash}")
     return 0
 
 
@@ -46,6 +62,27 @@ def cmd_fmt(args) -> int:
     else:
         sys.stdout.write(canonical)
     return 0
+
+
+def cmd_test(args) -> int:
+    app = _load_file(args.bundle)
+    results = run_tests(app)
+    failed = [r for r in results if not r.ok]
+    if args.json:
+        print(json.dumps({
+            "ok": not failed,
+            "bundle_sha256": app.bundle_hash,
+            "cases": [{"name": r.name, "ok": r.ok, "failures": r.failures} for r in results],
+        }))
+    else:
+        for r in results:
+            print(f"{'PASS' if r.ok else 'FAIL'}  {r.name}")
+            for failure in r.failures:
+                print(f"      {failure}")
+        print(f"{len(results) - len(failed)}/{len(results)} cases passed")
+    if not results:
+        print("warning: bundle has no (tests ...) section", file=sys.stderr)
+    return 1 if failed else 0
 
 
 def cmd_unpack(args) -> int:
@@ -68,28 +105,43 @@ def cmd_unpack(args) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="uplc", description="UPL bundle compiler: check, format, and unpack .upl bundles.")
+    parser = argparse.ArgumentParser(prog="uplc", description="UPL bundle compiler: check, format, test, and unpack .upl bundles.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_check = sub.add_parser("check", help="validate a bundle")
     p_check.add_argument("bundle")
+    p_check.add_argument("--json", action="store_true", help="machine-readable output")
     p_check.set_defaults(fn=cmd_check)
 
     p_fmt = sub.add_parser("fmt", help="print (or rewrite) the canonical form")
     p_fmt.add_argument("bundle")
     p_fmt.add_argument("--write", action="store_true", help="rewrite the file in place")
-    p_fmt.set_defaults(fn=cmd_fmt)
+    p_fmt.set_defaults(fn=cmd_fmt, json=False)
+
+    p_test = sub.add_parser("test", help="run the bundle's (tests ...) cases against its unpacked app")
+    p_test.add_argument("bundle")
+    p_test.add_argument("--json", action="store_true", help="machine-readable output")
+    p_test.set_defaults(fn=cmd_test)
 
     p_unpack = sub.add_parser("unpack", help="compile a bundle to server/web/db targets")
     p_unpack.add_argument("bundle")
     p_unpack.add_argument("-o", "--out", default="build", help="output directory (default: build)")
-    p_unpack.set_defaults(fn=cmd_unpack)
+    p_unpack.set_defaults(fn=cmd_unpack, json=False)
 
     args = parser.parse_args(argv)
     try:
         return args.fn(args)
     except (BundleError, ParseError) as err:
-        print(f"error: {err}", file=sys.stderr)
+        if getattr(args, "json", False):
+            payload = {"ok": False, "error": {"message": str(err)}}
+            if isinstance(err, BundleError):
+                payload["error"]["path"] = err.path
+            if isinstance(err, ParseError):
+                payload["error"]["line"] = err.line
+                payload["error"]["column"] = err.col
+            print(json.dumps(payload))
+        else:
+            print(f"error: {err}", file=sys.stderr)
         return 1
     except FileNotFoundError as err:
         print(f"error: {err}", file=sys.stderr)

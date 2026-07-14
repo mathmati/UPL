@@ -9,8 +9,11 @@ This repo contains both the research that scoped the idea and a **working v0.1 i
 ## Quickstart
 
 ```sh
-# validate a bundle
+# validate a bundle (add --json for machine-readable diagnostics)
 PYTHONPATH=compiler python3 -m uplc check examples/tasks.upl
+
+# run the bundle's own acceptance tests against its unpacked app
+PYTHONPATH=compiler python3 -m uplc test examples/tasks.upl
 
 # unpack it into runnable targets
 PYTHONPATH=compiler python3 -m uplc unpack examples/tasks.upl -o build
