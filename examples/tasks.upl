@@ -1,0 +1,39 @@
+; UPL v0.1 bundle — a minimal task tracker.
+; Unpack: python -m uplc unpack examples/tasks.upl -o build
+(upl 0.1
+  (intent "A minimal task tracker. Users add tasks with a short title, see them newest-first, mark them done or not done with a checkbox, and delete them. Titles must be 1-200 characters.")
+  (schema
+    (entity Task
+      (field id (id) (auto))
+      (field title (text) (require (and (>= (len title) 1) (<= (len title) 200))))
+      (field done (bool) (default false))
+      (field created_at (timestamp) (auto))))
+  (workflow
+    (action create_task
+      (input (title text))
+      (requires (>= (len title) 1))
+      (effect (insert Task (title title) (done false)))
+      (ensures (= (. result title) title))
+      (ensures (= (. result done) false)))
+    (action toggle_task
+      (input (id id))
+      (effect (update Task id (done (not (. current done)))))
+      (ensures (!= (. result done) (. current done))))
+    (action delete_task
+      (input (id id))
+      (effect (delete Task id)))
+    (query list_tasks
+      (from Task)
+      (order-by created_at desc)))
+  (ui
+    (page home "/"
+      (heading "Tasks")
+      (form
+        (action create_task)
+        (field title (label "New task")))
+      (list
+        (query list_tasks)
+        (item
+          (checkbox (bind done) (action toggle_task (id id)))
+          (text title)
+          (button (label "Delete") (action delete_task (id id))))))))

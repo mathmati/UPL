@@ -4,7 +4,48 @@ Research into the idea sparked by this tweet:
 
 > "I wonder if we will ever see a new programming language go mainstream. If one does, it might serve the opposite purpose of every programming language humans have ever seen. Instead of making programming more accessible to humans it will be less accessible."
 
-Two rival concepts were explored, plus a feasibility study and a survey of who's already building in this space. The full reports live in [`research/`](research/); this README is the synthesis.
+This repo contains both the research that scoped the idea and a **working v0.1 implementation**: a bundle language + deterministic compiler that unpacks one `.upl` file into a runnable Python server, an HTML/JS frontend, and a SQL schema, with contracts enforced at runtime.
+
+## Quickstart
+
+```sh
+# validate a bundle
+PYTHONPATH=compiler python3 -m uplc check examples/tasks.upl
+
+# unpack it into runnable targets
+PYTHONPATH=compiler python3 -m uplc unpack examples/tasks.upl -o build
+
+# run the generated app (zero dependencies — stdlib only)
+python3 build/server/app.py     # → http://127.0.0.1:8000
+
+# run the test suite (20 tests, incl. end-to-end against the generated server)
+python3 -m unittest discover -s tests
+```
+
+The demo bundle ([`examples/tasks.upl`](examples/tasks.upl)) is a complete task tracker — schema, actions with `requires`/`ensures` contracts, a query, and a UI — in 36 lines of UPL. It unpacks into ~340 lines of Python, HTML/JS, and SQL.
+
+## Layout
+
+| Path | What |
+|---|---|
+| [`spec/SPEC.md`](spec/SPEC.md) | UPL v0.1 language specification |
+| [`compiler/uplc/`](compiler/uplc/) | The compiler: reader/canonical printer, expression language, validator, and deterministic emitters (Python, web, SQL) |
+| [`examples/tasks.upl`](examples/tasks.upl) | Demo bundle |
+| [`tests/`](tests/) | Compiler tests + end-to-end runtime tests |
+| [`research/`](research/) | The four research reports that scoped the design |
+
+## Design principles (from the research)
+
+1. **AI at the boundaries, determinism in the middle.** An AI authors and edits the bundle; the unpacker is a plain deterministic compiler — the same bundle always produces byte-identical output (tested). Diffs stay reviewable, caching works, and "does the artifact match the bundle?" is decidable.
+2. **Canonical form.** One valid serialization per bundle (`uplc fmt`); its sha256 is the program's identity and is stamped into every generated file.
+3. **Contracts are the audit surface.** `requires`/`ensures`/field `require` compile into the targets and are enforced at runtime (400 for client contract violations, 500 for ensures failures — i.e., compiler bugs). Humans audit the bundle; machines check the code.
+4. **Generated artifacts are cattle.** Every output carries a `DO NOT EDIT` header naming its source bundle and hash.
+
+---
+
+## The research
+
+Two rival concepts were explored, plus a feasibility study and a survey of who's already building in this space. The full reports live in [`research/`](research/); the rest of this README is the synthesis.
 
 | Report | Question |
 |---|---|
