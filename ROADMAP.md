@@ -75,11 +75,21 @@ roadmap promised. The cost/effort/review-surface gaps held and widened
 (direct arm: 1.47× tokens, 2.8× tool calls, 4.6× larger review surface,
 and its verification was ephemeral while Miura's is carried in the bundle).
 
-Crucial caveat found in the running: the direct arm was **prompted with
-Miura's built-in guarantees as an explicit checklist** (hash passwords,
-persist sessions, enforce ownership, preserve data on migrate), which
-biases toward parity. The remaining decisive experiment: **withhold that
-checklist** (the realistic vibe-coding condition) and/or weaken the model
-and/or multiply the permission rules — that isolates whether Miura's value
-is "correct when you forget to ask," which is the real failure mode, vs.
-"correct when told exactly what to check," which both arms already do.
+That run was then **rerun with the safety checklist withheld** (the
+realistic condition). Result: **all four direct apps again passed 88/88** —
+the correctness gap did not appear a third time. The agents chose secure
+implementations from the contract's requirements alone. So the roadmap's
+"the gap will show at the auth tier" prediction is, on this evidence,
+**wrong**, and we say so.
+
+Reframed thesis, now evidence-backed: at small-to-medium scale a capable
+self-testing model writes correct auth/migrations by direct generation;
+**Miura's measured value is cost (~1.5× tokens, ~2.8× tool calls), a 4.6×
+smaller test-carrying review surface, and structural (compiler-enforced,
+artifact-carried) rather than contingent (this-episode-tested)
+correctness** — not fewer bugs. Miura's *correctness* advantage should be
+proportional to how much the author would otherwise have to hold in its
+head, so the conditions that would surface it are a **weaker author**
+(Haiku direct arm) or a **much larger permission surface** — the honest
+next experiments, replacing the auth-tier prediction that this benchmark
+falsified.

@@ -46,8 +46,10 @@ class MiuraArm:
 
 
 class DirectArm:
+    subdir = "direct"
+
     def __init__(self, task, tmp):
-        self.base = os.path.join(BENCH, "direct", task)
+        self.base = os.path.join(BENCH, self.subdir, task)
         self.tmp = tmp
 
     def v1_entry(self, tag):
@@ -65,11 +67,18 @@ class DirectArm:
             raise RuntimeError(f"migrate.py failed: {r.stderr or r.stdout}")
 
 
+class DirectNoChecklistArm(DirectArm):
+    subdir = "direct_nocl"
+
+
+ARMS = {"miura": MiuraArm, "direct": DirectArm, "direct_nocl": DirectNoChecklistArm}
+
+
 def main():
     task, arm_name = sys.argv[1], sys.argv[2]
     result = {"task": task, "arm": arm_name}
     with tempfile.TemporaryDirectory(prefix="bench2-") as tmp:
-        arm = (MiuraArm if arm_name == "miura" else DirectArm)(task, tmp)
+        arm = ARMS[arm_name](task, tmp)
 
         # --- permission matrix on a fresh v1 ---
         perm = Checks()

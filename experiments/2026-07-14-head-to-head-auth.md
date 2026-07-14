@@ -109,13 +109,91 @@ review** to reach the same score.
   — which is the actual vibe-coding failure mode — rather than "gets it
   right when explicitly told what to check," which both arms now do.
 
+## Addendum: the no-checklist rerun (the realistic condition)
+
+The caveat above was decisive enough to rerun. The four direct agents were
+relaunched with **one sentence removed** — the paragraph that named the
+footguns ("hash passwords, persist sessions, ownership 403, don't
+drop-and-recreate on migration"). Everything else was byte-identical: same
+tasks, same contract (which still *states* the requirements — 401/403,
+passwords never returned, sessions persist, migration preserves rows), same
+"test however you like," same hidden oracle. This isolates "correct when
+you forget to ask" from "correct when told exactly what to check." The
+Miura arm was not rerun — its guarantees are compiled in regardless of
+prompting.
+
+**Result: all four no-checklist direct apps also passed 88/88.** The
+correctness gap did not appear a third time. The agents *independently*
+chose PBKDF2 hashing, DB-backed sessions, the 403 ownership distinction,
+and in-place `ALTER TABLE` migrations — because the contract stated the
+requirements and the agents tested against them. Removing the checklist
+made the direct arm slightly **more expensive** (307,848 tokens vs 290,391
+with the checklist; they had to rediscover the footguns themselves — e.g.
+the snippets agent hit and fixed a `?`-bind-in-DDL bug in its migration)
+but no less correct.
+
+| Metric (4 tasks) | Miura | Direct (checklist) | Direct (no checklist) |
+|---|---|---|---|
+| Hidden-oracle checks | **88/88** | 88/88 | 88/88 |
+| Output tokens | 197,347 | 290,391 (1.47×) | 307,848 (1.56×) |
+| Tool invocations | 60 | 168 (2.8×) | 165 (2.75×) |
+| Review surface (lines) | 562 *incl. tests* | 2,568 *no tests* | 2,527 *no tests* |
+
+## The honest conclusion, after three runs
+
+The correctness gap has now failed to appear **three times**: simple CRUD,
+auth+migration with the checklist, and auth+migration without it. It is
+time to stop predicting it and state the finding:
+
+**At small-to-medium task scale, a capable self-testing model (Sonnet)
+writes correct auth and migrations by direct generation — with or without
+being told where the traps are. Miura's deterministic compiler does not
+produce *more-correct* code than a diligent direct agent at this scale.**
+We will not claim otherwise, and the roadmap's "the gap will show at the
+auth tier" prediction is, on this evidence, **wrong**.
+
+What the three runs *do* robustly establish — the defensible value, now
+well-measured:
+
+1. **Cost/effort: a stable ~1.5× token, ~2.8× tool-call gap**, invariant to
+   the checklist and consistent across two complexity tiers. Declaring
+   `(auth ...)`/`(allow ...)` and running `miurac migrate` is simply less
+   work than hand-writing sessions, hashing, ownership conditionals, and a
+   migration script — even for a model that does the latter correctly.
+2. **A 4.6× smaller review surface that carries its own tests.** The human
+   signs off on 562 lines including the acceptance suite, versus ~2,530
+   lines with no committed test.
+3. **Structural vs. contingent correctness — the real distinction.** The
+   direct arm is correct *because this run's agent tested thoroughly*. That
+   correctness is a property of the *episode*, not the *artifact*: the next
+   careless edit can silently reintroduce a 200-instead-of-403 with no test
+   to catch it. Miura's permission rules are enforced by the compiler on
+   *every* build and its tests live in the bundle — correctness is a
+   property of the artifact. This benchmark measures a single episode, so
+   it cannot see this difference; it is nonetheless the most important one.
+
+## Where the correctness gap would actually live (untested, honestly)
+
+The self-testing capability of a strong model is doing the work that closes
+the gap. So the gap should appear where that capability degrades: **a
+weaker author** (a Haiku direct arm, which self-tests less effectively) or
+**a much larger surface** (dozens of permission rules, where a finite test
+budget can't cover every interaction). Those — not "a bit more auth" — are
+the conditions to test next. The reframed, evidence-backed thesis: *Miura's
+correctness advantage is proportional to how much the author would
+otherwise have to hold in its head and remember to test.* For a strong
+model on a bounded task, that advantage is ~0 on correctness and real on
+cost; it should grow as authors weaken and surfaces widen.
+
 ## Honest limitations
 
-- n=4 tasks, one model, one run; directional, not statistical.
-- The decisive fairness caveat above: the direct arm was prompted with
-  Miura's built-in guarantees as an explicit checklist.
+- n=4 tasks per condition, one model family, one run each; directional.
 - Tasks sit inside Miura's v0.4–v0.6 competence by construction; nothing
   here speaks to apps Miura can't express.
+- Both benchmark arms measure a single authoring episode, so the
+  structural-vs-contingent correctness distinction (point 3 above) is
+  argued, not measured — a maintenance/edit-churn experiment would be
+  needed to measure it.
 - Oracle, tasks, and one arm's language share an author; mitigated by the
   hidden-until-launch oracle, the pinned neutral contract, and full
   artifact publication, but independent replication would be stronger.

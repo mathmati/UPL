@@ -99,10 +99,21 @@ Two adversarial research audits answer this
   the artifact, while the direct arm's testing evaporated with its shell
   session. Three of five direct-arm agents independently hit the same
   SQLite threading bug; that bug class cannot exist in compiled bundles.
-  Honest caveats: n=5 small apps inside Miura's domain, one model, and the
-  correctness gap the bet ultimately cares about didn't appear at this
-  scale — the verified claim so far is *same correctness for ~3-4x less
-  work, with durable verification*, not *fewer bugs*.
+  This was then retested at a harder tier — **auth + permissions + a
+  live-data migration**, the place the "fewer bugs" claim should show
+  ([`experiments/2026-07-14-head-to-head-auth.md`](experiments/2026-07-14-head-to-head-auth.md)) —
+  *twice*, the second time with the direct arm's safety checklist withheld
+  (the realistic condition). Both times: **again identical correctness
+  (88/88), again ~1.5x cheaper / 2.8x fewer tool calls / 4.6x smaller,
+  test-carrying review surface.** Across **three runs the predicted
+  correctness gap never appeared** — a capable self-testing model writes
+  correct auth by direct generation, told or not told where the traps are.
+  So the honest, evidence-backed claim is *same correctness for materially
+  less work, with **structural** (compiler-enforced, artifact-carried)
+  rather than **contingent** (this-session-tested) correctness* — **not
+  fewer bugs**. The correctness advantage should scale with author weakness
+  and surface size (a weaker-model / many-more-rules rerun is the honest
+  next test); at strong-model, bounded-task scale it is ~0.
 
 A second round ([`experiments/2026-07-14-limits.md`](experiments/2026-07-14-limits.md))
 probed the edges: a **maintenance** round (extend an existing bundle without

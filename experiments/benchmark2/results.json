@@ -18,8 +18,16 @@
       "miura":  {"oracle_passed": 22, "tokens": 48259, "tool_uses": 10, "repair_rounds": 0, "bundle_v1_loc": 133, "generated_loc": 873},
       "direct": {"oracle_passed": 22, "tokens": 79772, "tool_uses": 35, "repair_rounds": 0, "app_v1_loc": 513, "migrate_loc": 78}}
   },
+  "no_checklist_rerun": {
+    "what_changed": "The direct arm was relaunched with ONE sentence removed — the footgun checklist (hash passwords, persist sessions, ownership 403, don't drop-and-recreate). Task, contract, oracle, and 'test however you like' all byte-identical. Isolates 'correct when you forget to ask'.",
+    "oracle": {"direct_nocl": "88/88"},
+    "tokens": {"direct_nocl": 307848, "ratio_over_miura": 1.56, "note": "slightly MORE than the checklist run (290391) — agents rediscovered the footguns via their own testing"},
+    "tool_uses": {"direct_nocl": 165},
+    "per_task_tokens": {"snippets": 89541, "expenses": 70718, "bookings": 71124, "docs": 76465},
+    "review_loc": {"direct_nocl_code_excl_tests": 2527}
+  },
   "totals": {
-    "oracle": {"miura": "88/88", "direct": "88/88"},
+    "oracle": {"miura": "88/88", "direct_checklist": "88/88", "direct_no_checklist": "88/88"},
     "tokens": {"miura": 197347, "direct": 290391, "ratio_direct_over_miura": 1.47},
     "tool_uses": {"miura": 60, "direct": 168, "ratio": 2.80},
     "human_review_loc": {
@@ -27,6 +35,7 @@
       "direct_code_excl_tests": 2568,
       "ratio": 4.57,
       "note": "Miura's 562 lines INCLUDE the acceptance tests; the direct arm's 2568 lines (app v1 + migrate scripts) include NO tests. Miura migration adds 0 reviewable lines (miurac migrate). Generated Miura code (3532 lines) is not reviewed."
-    }
+    },
+    "correctness_finding": "Correctness parity across all three conditions (CRUD, auth+migration with checklist, auth+migration without). The predicted correctness gap did NOT appear. Robust value is cost (~1.5x tokens, ~2.8x tool calls), a 4.6x smaller test-carrying review surface, and structural (compiler-enforced, artifact-carried) vs contingent (this-episode-tested) correctness."
   }
 }
