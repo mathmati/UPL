@@ -23,9 +23,12 @@ def emit_sql(app: App, header: str) -> str:
         lines.append(f"CREATE TABLE IF NOT EXISTS {table_name(e.name)} (")
         cols = []
         for f in e.fields:
-            col = f"    {f.name} {_SQL_TYPES[f.type]} NOT NULL"
-            if f.type == "id":
-                col += " PRIMARY KEY"
+            if f.type == "ref":
+                col = f"    {f.name} TEXT NOT NULL REFERENCES {table_name(f.ref_entity)}(id)"
+            else:
+                col = f"    {f.name} {_SQL_TYPES[f.type]} NOT NULL"
+                if f.type == "id":
+                    col += " PRIMARY KEY"
             cols.append(col)
         lines.append(",\n".join(cols))
         lines.append(");")

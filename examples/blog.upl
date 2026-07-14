@@ -1,0 +1,89 @@
+; UPL v0.3 bundle — a micro-blog exercising relations:
+; (ref Entity) fields, parameterized queries, and row-scoped nested UI.
+(upl 0.1
+  (intent "A micro-blog. Authors write posts with a title and body. Readers leave comments on a specific post; each post shows its own comments and a comment form. Deleting a post deletes its comments. Comments can be deleted individually.")
+  (schema
+    (entity Post
+      (field id (id) (auto))
+      (field title (text) (require (and (>= (len title) 1) (<= (len title) 120))))
+      (field body (text) (require (and (>= (len body) 1) (<= (len body) 2000))))
+      (field created_at (timestamp) (auto)))
+    (entity Comment
+      (field id (id) (auto))
+      (field post (ref Post) (on-delete cascade))
+      (field text (text) (require (and (>= (len text) 1) (<= (len text) 500))))
+      (field created_at (timestamp) (auto))))
+  (workflow
+    (action create_post
+      (input (title text) (body text))
+      (requires (>= (len title) 1))
+      (effect (insert Post (title title) (body body)))
+      (ensures (= (. result title) title)))
+    (action create_comment
+      (input (post_id id) (text text))
+      (requires (>= (len text) 1))
+      (effect (insert Comment (post post_id) (text text)))
+      (ensures (= (. result post) post_id)))
+    (action delete_post
+      (input (id id))
+      (effect (delete Post id)))
+    (action delete_comment
+      (input (id id))
+      (effect (delete Comment id)))
+    (query list_posts
+      (from Post)
+      (order-by created_at desc))
+    (query comments_for_post
+      (input (post_id id))
+      (from Comment)
+      (where (= post post_id))
+      (order-by created_at asc)))
+  (ui
+    (page home "/"
+      (heading "Micro-blog")
+      (form
+        (action create_post)
+        (field title (label "Title"))
+        (field body (label "Body")))
+      (list
+        (query list_posts)
+        (item
+          (text title)
+          (text body)
+          (button (label "Delete post") (action delete_post (id id)))
+          (list
+            (query comments_for_post (post_id id))
+            (item
+              (text text)
+              (button (label "Delete") (action delete_comment (id id)))))
+          (form
+            (action create_comment)
+            (bind post_id id)
+            (field text (label "Add a comment")))))))
+  (tests
+    (case comments_scoped_to_their_post
+      (do create_post (title "A") (body "post a") (as pa))
+      (do create_post (title "B") (body "post b") (as pb))
+      (do create_comment (post_id (. pa id)) (text "on A"))
+      (do create_comment (post_id (. pb id)) (text "on B, first"))
+      (do create_comment (post_id (. pb id)) (text "on B, second"))
+      (check (comments_for_post (post_id (. pa id)))
+        (expect (= (len result) 1))
+        (row 0 (as only))
+        (expect (= (. only text) "on A")))
+      (check (comments_for_post (post_id (. pb id)))
+        (expect (= (len result) 2))
+        (row 0 (as first))
+        (expect (= (. first text) "on B, first"))))
+    (case rejects_comment_on_missing_post
+      (fail create_comment (post_id "no-such-post") (text "orphan")))
+    (case deleting_post_cascades_comments
+      (do create_post (title "Doomed") (body "gone soon") (as p))
+      (do create_comment (post_id (. p id)) (text "me too") (as c))
+      (do delete_post (id (. p id)))
+      (check (comments_for_post (post_id (. p id)))
+        (expect (= (len result) 0))))
+    (case rejects_empty_bodies
+      (fail create_post (title "ok") (body ""))
+      (do create_post (title "ok") (body "fine") (as p))
+      (fail create_comment (post_id (. p id)) (text "")))))

@@ -109,7 +109,11 @@ def _run_step(module, step, env, result: CaseResult, i: int):
         result.failures.append(f"step {i}: (fail {step.action} ...) expected a contract rejection but the action succeeded")
     elif isinstance(step, StepCheck):
         fn = getattr(module, f"query_{step.query}")
-        rows = fn()
+        if step.args:
+            qargs = {name: _eval(value_expr, env, src) for name, value_expr, src in step.args}
+            rows = fn(qargs)
+        else:
+            rows = fn()
         check_env = dict(env, result=rows)
         for part in step.parts:
             if part[0] == "expect":

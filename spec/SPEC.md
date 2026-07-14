@@ -49,7 +49,8 @@ it in practice).
   (field name (type) option...))
 ```
 
-Types: `id`, `text`, `int`, `bool`, `timestamp`.
+Types: `id`, `text`, `int`, `bool`, `timestamp`, and `(ref Entity)`
+(a reference to another entity's row by id).
 
 Field options:
 
@@ -60,8 +61,16 @@ Field options:
 - `(require expr)` — invariant checked on every insert and on every
   update that assigns the field. May reference only the field's own
   name (which is bound to the candidate value).
+- `(on-delete restrict|cascade)` — ref fields only; default `restrict`.
 
 Every entity must have exactly one `(field ... (id) (auto))`.
+
+Referential integrity: a write that sets a ref field to an id with no
+matching row is rejected (400). Deleting a row referenced by a
+`restrict` ref is rejected; a `cascade` ref deletes the referencing
+rows first (all restrict checks run before any cascade deletes).
+Cascade is not allowed on a self-reference, nor into an entity that is
+itself referenced (cascades are one level deep by construction).
 
 ### workflow
 
@@ -91,10 +100,14 @@ Effects:
 
 ```
 (query name
+  (input (name type)...)          ; optional parameters, usable in where
   (from Entity)                   ; required
-  (where expr)                    ; optional, over bare field names
+  (where expr)                    ; optional, over bare field names + inputs
   (order-by field asc|desc))      ; optional; id is the tiebreaker
 ```
+
+Query input names must not collide with the entity's field names.
+A parameterized query is served as `GET /api/<name>?<input>=<value>`.
 
 ### Expressions
 
@@ -116,15 +129,22 @@ compile error, never a runtime surprise.
 Components:
 
 - `(heading "text")`
-- `(form (action name) (field input-name (label "text"))...)` — must
-  cover all of the action's inputs.
-- `(list (query name) (item item-component...))`
+- `(form (action name) (field input-name (label "text"))... (bind input-name row-field)...)`
+  — fields and binds together must cover all of the action's inputs.
+  `bind` fills an input invisibly from the enclosing row, so it is only
+  allowed on forms inside a list item.
+- `(list (query name (query-input row-field)...) (item item-component...))`
+  — query args are required exactly when the query is parameterized,
+  and only allowed inside a list item (they pull from the parent row).
 
 Item components (rendered per row):
 
 - `(text field)`
 - `(checkbox (bind field) (action name (input-name row-field)...))`
 - `(button (label "text") (action name (input-name row-field)...))`
+- `(heading "text")`, nested `(form ...)`, nested `(list ...)` — the
+  row-scoped nesting used for parent/child UIs (a post's comments and
+  its comment form live inside the post's item).
 
 Component/action arg lists must supply every input of the referenced
 action; args pull values from the current row's fields.
@@ -148,7 +168,9 @@ Steps:
   case.
 - `(fail action (input value)...)` — assert the action is rejected by a
   contract (requires / field require). Success fails the case.
-- `(check query part...)` — run a query. Parts are processed in order:
+- `(check query part...)` — run a query; parameterized queries take
+  their inputs as `(check (query (input value)...) part...)`. Parts are
+  processed in order:
   `(expect expr)` (where `result` is the row list; `(len result)` counts
   it) and `(row N (as name))`, which binds the N-th row (0-based, in
   query order) for later expects and steps — the mechanism for
@@ -183,9 +205,9 @@ Environment: `UPL_PORT` (default 8000), `UPL_DB` (default
 | `uplc unpack bundle -o dir` | write server/web/db targets |
 | `uplc verify bundle -o dir [--json]` | drift detection: exit 1 if on-disk artifacts don't match what the bundle generates |
 
-## Not in v0.1 (deliberately)
+## Not yet in the language (deliberately)
 
-Relations between entities, auth/sessions, migrations (schema is
-create-if-not-exists only), pagination, client-side validation, the
-AI edit-lift tool, WASM target, SMT-checked contracts. Each is scoped
-in `research/03-building-it-now.md`.
+Auth/sessions, migrations (schema is create-if-not-exists only),
+pagination, aggregates (counts/sums in queries), client-side
+validation, the AI edit-lift tool, WASM target, SMT-checked contracts.
+Each is scoped in `research/03-building-it-now.md`.

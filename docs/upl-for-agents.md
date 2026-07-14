@@ -53,8 +53,13 @@ Rules:
 - `(require expr)`: an invariant checked on insert/update. It may reference
   **only the field's own name** (bound to the candidate value). Works for any
   type — text length checks and numeric bounds alike.
-- v0.1 has **no relations** between entities. Model within one entity, or use
-  multiple independent entities.
+- **Relations**: `(field post (ref Post))` stores the id of an existing `Post`
+  row. Writes that point at a missing row are rejected (contract violation).
+  Deleting a referenced row is rejected by default; add `(on-delete cascade)`
+  to the ref field to delete the children instead:
+  `(field post (ref Post) (on-delete cascade))`. Ref fields can't be `(auto)`
+  or have a `(default)` — every insert must assign them (typically from an
+  input of type `id`).
 
 ## workflow — actions (writes) and queries (reads)
 
@@ -95,6 +100,20 @@ Rules:
 - Queries: one `(from Entity)`, optional `(where expr)` over bare field names,
   optional `(order-by field asc|desc)`. `order-by` works on any field type
   (text sorts lexicographically, so alphabetical listings are fine).
+- **Parameterized queries**: a query may declare `(input (name type)...)` and
+  use those names in its `where` — this is how you scope rows to a parent,
+  e.g. "comments for one post":
+
+  ```
+  (query comments_for_post
+    (input (post_id id))
+    (from Comment)
+    (where (= post post_id))      ; post = field, post_id = the parameter
+    (order-by created_at asc))
+  ```
+
+  Input names must not collide with the entity's field names — rename the
+  parameter if they would (`post_id`, not `post`).
 - Counters/increments work via update: `(update Counter id (n (+ (. current n) 1)))`.
 - **Where to put a contract:** a field `(require ...)` is the invariant — it
   rejects bad values on *every* write path (insert and update), which is the
@@ -125,11 +144,23 @@ division, no string concatenation, no if/else.
 ```
 
 Rules:
-- A form must have a `(field ...)` for **every input** of its action.
+- A form must cover **every input** of its action, via `(field ...)` (visible,
+  user-typed) and/or `(bind ...)` (hidden, row-supplied — see below).
 - Inside `(item ...)`: `(text field)`, `(checkbox (bind field) (action name args...))`,
   `(button (label "…") (action name args...))`. Action args are
   `(input-name row-field)` pairs — they pull values from the current row and
   must cover **all** inputs of the action.
+- **Row-scoped nesting** — a list item may also contain `(heading ...)`, a
+  nested `(form ...)`, and a nested `(list ...)`:
+  - A nested form may use `(bind input row-field)` to fill an action input
+    from the current row invisibly, e.g. a per-post comment form:
+    `(form (action create_comment) (bind post_id id) (field text (label "Add a comment")))`.
+    `bind` is only allowed inside an item; visible fields + binds together
+    must cover the action's inputs exactly.
+  - A nested list passes the row's fields into a parameterized query:
+    `(list (query comments_for_post (post_id id)) (item (text text)))` —
+    the `(post_id id)` pair maps the query input `post_id` from the row's
+    `id` field, and must cover all the query's inputs.
 - Labels are strings; everything else is symbols.
 
 ## tests — acceptance cases (always include these)
@@ -163,7 +194,9 @@ Rules:
 - `(fail action (input value)...)` — asserts the action is **rejected by a
   contract** (an action `requires` or a field `require` — both count).
   If it succeeds, the case fails.
-- `(check query part...)` — runs a query; parts are processed in order:
+- `(check query part...)` — runs a query. For a parameterized query, pass its
+  inputs: `(check (comments_for_post (post_id (. p id))) (expect ...))`.
+  Parts are processed in order:
   - `(expect expr)` — `result` is the row list; `(len result)` counts it.
   - `(row N (as name))` — binds the N-th row (0-based, in query order) for
     later expects and steps: this is how you assert ordering, as in the
@@ -182,6 +215,9 @@ Rules:
 6. Booleans as strings: use `true`/`false`, not `"true"`.
 7. `(default)` on an `(auto)` field.
 8. Using an unbound name in a test step — bind rows with `(as name)` first.
+9. A query input named the same as one of the entity's fields.
+10. `(bind ...)` on a top-level form — binds need a row, so they only work on
+    forms inside a list item.
 
 ## Style
 

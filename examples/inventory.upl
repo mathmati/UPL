@@ -1,5 +1,5 @@
 (upl 0.1
-  (intent "An inventory counter. Items have a name and a quantity that starts at zero. Buttons increment and decrement an item's quantity, and quantity can never drop below zero. Items can be deleted.")
+  (intent "An inventory counter. Items have a name and a quantity that starts at zero. Buttons increment and decrement an item's quantity, and quantity can never drop below zero. A restock form adds a chosen number of units to an item in one step. A low-stock view lists items with quantity below 5, lowest first. Items can be deleted.")
 
   (schema
     (entity Item
@@ -29,9 +29,20 @@
       (input (id id))
       (effect (delete Item id)))
 
+    (action restock_item
+      (input (id id) (n int))
+      (requires (and (>= n 1) (<= n 1000)))
+      (effect (update Item id (quantity (+ (. current quantity) n))))
+      (ensures (= (. result quantity) (+ (. current quantity) n))))
+
     (query list_items
       (from Item)
-      (order-by created_at desc)))
+      (order-by created_at desc))
+
+    (query low_stock_items
+      (from Item)
+      (where (< quantity 5))
+      (order-by quantity asc)))
 
   (ui
     (page home "/"
@@ -39,6 +50,10 @@
       (form
         (action create_item)
         (field name (label "Item name")))
+      (form
+        (action restock_item)
+        (field id (label "Item id"))
+        (field n (label "Restock amount")))
       (list
         (query list_items)
         (item
@@ -46,7 +61,13 @@
           (text quantity)
           (button (label "+") (action increment_item (id id)))
           (button (label "-") (action decrement_item (id id)))
-          (button (label "Delete") (action delete_item (id id)))))))
+          (button (label "Delete") (action delete_item (id id)))))
+      (heading "Low stock")
+      (list
+        (query low_stock_items)
+        (item
+          (text name)
+          (text quantity)))))
 
   (tests
     (case lifecycle
@@ -64,4 +85,27 @@
         (expect (= (. result quantity) 0)))
       (fail decrement_item (id (. g id))))
     (case rejects_empty_name
-      (fail create_item (name "")))))
+      (fail create_item (name "")))
+    (case restock_happy_path
+      (do create_item (name "Bolt") (as b)
+        (expect (= (. result quantity) 0)))
+      (do restock_item (id (. b id)) (n 25)
+        (expect (= (. result quantity) 25))))
+    (case rejects_restock_out_of_range
+      (do create_item (name "Nut") (as nu)
+        (expect (= (. result quantity) 0)))
+      (fail restock_item (id (. nu id)) (n 0))
+      (fail restock_item (id (. nu id)) (n 1001)))
+    (case low_stock_view
+      (do create_item (name "Screw") (as s1))
+      (do restock_item (id (. s1 id)) (n 3))
+      (do create_item (name "Washer") (as s2))
+      (do restock_item (id (. s2 id)) (n 1))
+      (do create_item (name "Rivet") (as s3))
+      (do restock_item (id (. s3 id)) (n 50))
+      (check low_stock_items
+        (expect (= (len result) 2))
+        (row 0 (as lowest))
+        (expect (= (. lowest name) "Washer"))
+        (row 1 (as next))
+        (expect (= (. next name) "Screw"))))))

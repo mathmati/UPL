@@ -16,9 +16,17 @@ def _component_json(c):
     if isinstance(c, Heading):
         return {"kind": "heading", "text": c.text}
     if isinstance(c, Form):
-        return {"kind": "form", "action": c.action, "fields": [{"name": f.name, "label": f.label} for f in c.fields]}
+        return {
+            "kind": "form", "action": c.action,
+            "fields": [{"name": f.name, "label": f.label} for f in c.fields],
+            "binds": [{"input": a, "from": b} for a, b in c.binds],
+        }
     if isinstance(c, List):
-        return {"kind": "list", "query": c.query, "item": [_component_json(i) for i in c.item]}
+        return {
+            "kind": "list", "query": c.query,
+            "args": [{"input": a, "from": b} for a, b in c.args],
+            "item": [_component_json(i) for i in c.item],
+        }
     if isinstance(c, Text):
         return {"kind": "text", "field": c.field}
     if isinstance(c, Checkbox):
@@ -49,8 +57,11 @@ form label { display: flex; flex-direction: column; font-size: 0.85rem; gap: 0.1
 input[type=text], input[type=number] { padding: 0.4rem 0.6rem; font-size: 1rem; }
 button { padding: 0.4rem 0.8rem; font-size: 0.95rem; cursor: pointer; }
 .upl-list { display: flex; flex-direction: column; gap: 0.35rem; margin: 1rem 0; }
-.upl-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.6rem; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 6px; }
+.upl-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.6rem; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 6px; flex-wrap: wrap; }
 .upl-item .upl-text { flex: 1; overflow-wrap: anywhere; }
+.upl-item .upl-nested, .upl-item form, .upl-item .upl-subheading { flex-basis: 100%; }
+.upl-nested { margin-left: 1.2rem; }
+.upl-subheading { font-size: 1rem; margin: 0.3rem 0 0; }
 #upl-error { color: #b3261e; min-height: 1.4em; font-size: 0.9rem; }
 .upl-nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
 """
@@ -85,13 +96,12 @@ async function callAction(name, args) {
   });
 }
 
-const listInstances = [];
+const topLists = [];
 
 async function refreshAll() {
-  for (const inst of listInstances) {
+  for (const inst of topLists) {
     try {
-      const rows = await api('/api/' + inst.query);
-      inst.el.replaceChildren(...rows.map((row) => renderItem(inst.item, row)));
+      await renderList(inst.c, inst.el, null);
     } catch (err) {
       showError(err.message);
     }
@@ -104,7 +114,18 @@ function actionArgs(args, row) {
   return out;
 }
 
-function renderItem(components, row) {
+async function renderList(c, el, row) {
+  let url = '/api/' + c.query;
+  if (c.args && c.args.length) {
+    url += '?' + c.args.map((a) => encodeURIComponent(a.input) + '=' + encodeURIComponent(row[a.from])).join('&');
+  }
+  const rows = await api(url);
+  const items = [];
+  for (const r of rows) items.push(await renderItem(c.item, r));
+  el.replaceChildren(...items);
+}
+
+async function renderItem(components, row) {
   const item = document.createElement('div');
   item.className = 'upl-item';
   for (const c of components) {
@@ -130,9 +151,58 @@ function renderItem(components, row) {
         refreshAll();
       });
       item.appendChild(btn);
+    } else if (c.kind === 'heading') {
+      const h = document.createElement('h2');
+      h.className = 'upl-subheading';
+      h.textContent = c.text;
+      item.appendChild(h);
+    } else if (c.kind === 'form') {
+      item.appendChild(buildForm(c, row));
+    } else if (c.kind === 'list') {
+      const el = document.createElement('div');
+      el.className = 'upl-list upl-nested';
+      await renderList(c, el, row);
+      item.appendChild(el);
     }
   }
   return item;
+}
+
+function buildForm(c, row) {
+  const form = document.createElement('form');
+  const types = UI_MODEL.inputTypes[c.action] || {};
+  for (const f of c.fields) {
+    const label = document.createElement('label');
+    label.append(f.label);
+    const input = document.createElement('input');
+    const t = types[f.name] || 'text';
+    input.type = t === 'int' ? 'number' : t === 'bool' ? 'checkbox' : 'text';
+    input.name = f.name;
+    label.appendChild(input);
+    form.appendChild(label);
+  }
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.textContent = 'Add';
+  form.appendChild(submit);
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const args = {};
+    for (const f of c.fields) {
+      const input = form.elements[f.name];
+      const t = types[f.name] || 'text';
+      args[f.name] = t === 'int' ? Number(input.value) : t === 'bool' ? input.checked : input.value;
+    }
+    for (const b of (c.binds || [])) args[b.input] = row[b.from];
+    try {
+      await callAction(c.action, args);
+      form.reset();
+    } catch (err) {
+      showError(err.message);
+    }
+    refreshAll();
+  });
+  return form;
 }
 
 function renderComponent(c, root) {
@@ -141,43 +211,11 @@ function renderComponent(c, root) {
     h.textContent = c.text;
     root.appendChild(h);
   } else if (c.kind === 'form') {
-    const form = document.createElement('form');
-    const types = UI_MODEL.inputTypes[c.action] || {};
-    for (const f of c.fields) {
-      const label = document.createElement('label');
-      label.append(f.label);
-      const input = document.createElement('input');
-      const t = types[f.name] || 'text';
-      input.type = t === 'int' ? 'number' : t === 'bool' ? 'checkbox' : 'text';
-      input.name = f.name;
-      label.appendChild(input);
-      form.appendChild(label);
-    }
-    const submit = document.createElement('button');
-    submit.type = 'submit';
-    submit.textContent = 'Add';
-    form.appendChild(submit);
-    form.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const args = {};
-      for (const f of c.fields) {
-        const input = form.elements[f.name];
-        const t = types[f.name] || 'text';
-        args[f.name] = t === 'int' ? Number(input.value) : t === 'bool' ? input.checked : input.value;
-      }
-      try {
-        await callAction(c.action, args);
-        form.reset();
-      } catch (err) {
-        showError(err.message);
-      }
-      refreshAll();
-    });
-    root.appendChild(form);
+    root.appendChild(buildForm(c, null));
   } else if (c.kind === 'list') {
     const el = document.createElement('div');
     el.className = 'upl-list';
-    listInstances.push({ query: c.query, item: c.item, el });
+    topLists.push({ c, el });
     root.appendChild(el);
   }
 }

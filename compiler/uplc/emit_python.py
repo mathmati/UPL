@@ -12,6 +12,19 @@ from .model import App, Delete, Insert, Update
 from .emit_sql import emit_sql, table_name
 
 _COERCE = {"text": "_coerce_text", "int": "_coerce_int", "bool": "_coerce_bool", "id": "_coerce_id", "timestamp": "_coerce_text"}
+_QCOERCE = {"text": "_qcoerce_text", "int": "_qcoerce_int", "bool": "_qcoerce_bool", "id": "_qcoerce_text", "timestamp": "_qcoerce_text"}
+
+
+def _emit_ref_checks(lines, app, entity, values_py: str, assigned=None):
+    """Referential-integrity checks for assigned (ref ...) fields."""
+    for f in entity.fields:
+        if f.type != "ref":
+            continue
+        if assigned is not None and f.name not in assigned:
+            continue
+        ref_table = table_name(f.ref_entity)
+        lines.append(f'        if conn.execute("SELECT 1 FROM {ref_table} WHERE id = ?", ({values_py}[{f.name!r}],)).fetchone() is None:')
+        lines.append(f"            raise ContractViolation('{entity.name}.{f.name}: no {f.ref_entity} with id ' + str({values_py}[{f.name!r}]))")
 
 
 def _input_names(action):
@@ -61,6 +74,7 @@ def _emit_action(app: App, action) -> list:
             row_items.append(f"{f.name!r}: {value}")
         lines.append("        row = {" + ", ".join(row_items) + "}")
         _emit_field_requires_indented(lines, ent, "row")
+        _emit_ref_checks(lines, app, ent, "row")
         cols = ", ".join(f.name for f in ent.fields)
         marks = ", ".join("?" for _ in ent.fields)
         params = ", ".join(f"row[{f.name!r}]" for f in ent.fields)
@@ -81,6 +95,7 @@ def _emit_action(app: App, action) -> list:
             assigned.add(fname)
         lines.append("        updates = {" + ", ".join(update_items) + "}")
         _emit_field_requires_indented(lines, ent, "updates", assigned)
+        _emit_ref_checks(lines, app, ent, "updates", assigned)
         set_clause = ", ".join(f"{fname} = ?" for fname, _, _ in action.effect.assigns)
         set_params = ", ".join(f"updates[{fname!r}]" for fname, _, _ in action.effect.assigns)
         lines.append(f'        conn.execute("UPDATE {table} SET {set_clause} WHERE id = ?", ({set_params}, {id_py}))')
@@ -91,6 +106,14 @@ def _emit_action(app: App, action) -> list:
         lines.append(f'        current = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
         lines.append("        if current is None:")
         lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
+        ref_children = [(child, f) for child in app.entities for f in child.fields if f.type == "ref" and f.ref_entity == ent.name]
+        for child, f in ref_children:  # all restrict checks run before any cascade deletes
+            if f.on_delete == "restrict":
+                lines.append(f'        if conn.execute("SELECT 1 FROM {table_name(child.name)} WHERE {f.name} = ?", ({id_py},)).fetchone() is not None:')
+                lines.append(f"            raise ContractViolation('cannot delete {ent.name} ' + str({id_py}) + ': referenced by {child.name}.{f.name}')")
+        for child, f in ref_children:
+            if f.on_delete == "cascade":
+                lines.append(f'        conn.execute("DELETE FROM {table_name(child.name)} WHERE {f.name} = ?", ({id_py},))')
         lines.append(f'        conn.execute("DELETE FROM {table} WHERE id = ?", ({id_py},))')
         lines.append("        conn.commit()")
         lines.append('        result = {"ok": True}')
@@ -124,8 +147,11 @@ def _emit_query(app: App, query) -> list:
         sql += f" ORDER BY {query.order_by[0]} {query.order_by[1].upper()}, id ASC"
     else:
         sql += " ORDER BY id ASC"
-    lines = [f"def query_{query.name}():"]
-    lines.append(f'    """UPL query {query.name} over {query.entity}."""')
+    params = "inp" if query.inputs else ""
+    intent_inputs = ", ".join(f"{n} {t}" for n, t in query.inputs)
+    lines = [f"def query_{query.name}({params}):"]
+    doc = f"UPL query {query.name} over {query.entity}"
+    lines.append(f'    """{doc}{" (inputs: " + intent_inputs + ")" if intent_inputs else ""}."""')
     lines.append("    conn = _db()")
     lines.append("    try:")
     lines.append(f'        rows = conn.execute("{sql}").fetchall()')
@@ -134,6 +160,8 @@ def _emit_query(app: App, query) -> list:
     if query.where is not None:
         ent = app.entity(query.entity)
         names = {f.name: f"row[{f.name!r}]" for f in ent.fields}
+        for iname, _ in query.inputs:
+            names[iname] = f"inp[{iname!r}]"
         cond = E.to_python(query.where, names)
         lines.append(f"    rows = [row for row in rows if {cond}]")
     lines.append("    return rows")
@@ -148,6 +176,7 @@ def emit_python(app: App, header: str) -> str:
     out.append("import json")
     out.append("import os")
     out.append("import sqlite3")
+    out.append("import urllib.parse")
     out.append("import uuid")
     out.append("from datetime import datetime, timezone")
     out.append("from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer")
@@ -200,6 +229,25 @@ def emit_python(app: App, header: str) -> str:
     out.append("        raise ContractViolation('input ' + name + ' must be a boolean')")
     out.append("    return value")
     out.append("")
+    out.append("")
+    out.append("def _qcoerce_text(name, value):")
+    out.append("    if not value:")
+    out.append("        raise ContractViolation('query param ' + name + ' must not be empty')")
+    out.append("    return value")
+    out.append("")
+    out.append("")
+    out.append("def _qcoerce_int(name, value):")
+    out.append("    try:")
+    out.append("        return int(value)")
+    out.append("    except ValueError:")
+    out.append("        raise ContractViolation('query param ' + name + ' must be an integer')")
+    out.append("")
+    out.append("")
+    out.append("def _qcoerce_bool(name, value):")
+    out.append("    if value not in ('true', 'false'):")
+    out.append("        raise ContractViolation('query param ' + name + \" must be 'true' or 'false'\")")
+    out.append("    return value == 'true'")
+    out.append("")
 
     for action in app.actions:
         out.append("")
@@ -215,7 +263,10 @@ def emit_python(app: App, header: str) -> str:
     for action in app.actions:
         specs = ", ".join(f"({n!r}, {_COERCE[t]})" for n, t in action.inputs)
         action_entries.append(f"    {action.name!r}: (action_{action.name}, [{specs}]),")
-    query_entries = [f"    {q.name!r}: query_{q.name}," for q in app.queries]
+    query_entries = []
+    for q in app.queries:
+        specs = ", ".join(f"({n!r}, {_QCOERCE[t]})" for n, t in q.inputs)
+        query_entries.append(f"    {q.name!r}: (query_{q.name}, [{specs}]),")
     routes = sorted({p.route for p in app.pages})
 
     out.append("")
@@ -242,13 +293,26 @@ def emit_python(app: App, header: str) -> str:
     out.append("        self.wfile.write(body)")
     out.append("")
     out.append("    def do_GET(self):")
-    out.append("        path = self.path.split('?', 1)[0]")
+    out.append("        path, _, query_string = self.path.partition('?')")
     out.append("        if path.startswith('/api/'):")
     out.append("            name = path[len('/api/'):]")
-    out.append("            if name in QUERIES:")
-    out.append("                self._send_json(200, QUERIES[name]())")
-    out.append("            else:")
+    out.append("            if name not in QUERIES:")
     out.append("                self._send_json(404, {'error': 'unknown query: ' + name})")
+    out.append("                return")
+    out.append("            fn, input_spec = QUERIES[name]")
+    out.append("            try:")
+    out.append("                params = dict(urllib.parse.parse_qsl(query_string))")
+    out.append("                if input_spec:")
+    out.append("                    inp = {}")
+    out.append("                    for iname, coerce in input_spec:")
+    out.append("                        if iname not in params:")
+    out.append("                            raise ContractViolation('missing query param: ' + iname)")
+    out.append("                        inp[iname] = coerce(iname, params[iname])")
+    out.append("                    self._send_json(200, fn(inp))")
+    out.append("                else:")
+    out.append("                    self._send_json(200, fn())")
+    out.append("            except ContractViolation as err:")
+    out.append("                self._send_json(400, {'error': str(err)})")
     out.append("            return")
     out.append("        if path in PAGE_ROUTES:")
     out.append("            with open(os.path.join(WEB_DIR, 'index.html'), 'rb') as fh:")

@@ -53,6 +53,19 @@ on the first attempt — zero repair rounds** — and their feedback drove one
 language feature (ordering assertions in tests) and five guide fixes the
 same day. Details in [`experiments/2026-07-14-authoring.md`](experiments/2026-07-14-authoring.md).
 
+A second round ([`experiments/2026-07-14-limits.md`](experiments/2026-07-14-limits.md))
+probed the edges: a **maintenance** round (extend an existing bundle without
+breaking its contracts — the failure mode that killed model-driven
+engineering) passed with zero repairs; **Haiku** matched Sonnet on
+cold-start authoring, ruling out training-data leakage; and an intent
+deliberately **beyond the language** (a blog needing post↔comment
+relations) produced the best possible failure — a loud, precise wall report
+with proposed syntax instead of hallucinated code, because whole-bundle
+name resolution rejects anything invented. That proposal became the
+relations feature set the same day: `(ref Entity)` fields with enforced
+integrity and restrict/cascade deletes, parameterized queries, and
+row-scoped nested UI ([`examples/blog.upl`](examples/blog.upl)).
+
 ## Design principles (from the research)
 
 1. **AI at the boundaries, determinism in the middle.** An AI authors and edits the bundle; the unpacker is a plain deterministic compiler — the same bundle always produces byte-identical output (tested). Diffs stay reviewable, caching works, and "does the artifact match the bundle?" is decidable.

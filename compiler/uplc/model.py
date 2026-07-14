@@ -33,7 +33,9 @@ class BundleError(Exception):
 @dataclass
 class Field:
     name: str
-    type: str
+    type: str  # one of TYPES, or "ref"
+    ref_entity: str = ""  # set when type == "ref"
+    on_delete: str = "restrict"  # ref fields: restrict | cascade
     auto: bool = False
     default: object = None
     has_default: bool = False
@@ -79,6 +81,7 @@ class Action:
 class Query:
     name: str
     entity: str
+    inputs: list = dc_field(default_factory=list)  # [(name, type)] — query parameters
     where: object = None  # parsed expr or None
     where_src: str = ""
     order_by: object = None  # (field, "asc"|"desc") or None
@@ -99,6 +102,7 @@ class FormField:
 class Form:
     action: str
     fields: list  # [FormField]
+    binds: list = dc_field(default_factory=list)  # [(input_name, row_field)] — row-scoped forms only
 
 
 @dataclass
@@ -124,6 +128,7 @@ class Button:
 class List:
     query: str
     item: list  # item components
+    args: list = dc_field(default_factory=list)  # [(query_input, row_field)] — nested lists only
 
 
 @dataclass
@@ -151,6 +156,7 @@ class StepFail:
 class StepCheck:
     query: str
     parts: list  # ordered: ("expect", expr, src) | ("row", index, bind_name)
+    args: list = dc_field(default_factory=list)  # [(query_input, value_expr, src)]
 
 
 @dataclass
@@ -261,14 +267,22 @@ def _load_entity(node) -> Entity:
         _expect(len(f) >= 3, path, f"field needs a name and a (type): {dumps(f)}")
         fname = _sym(f[1], path, "field name")
         fpath = f"{path}.{fname}"
-        _expect(isinstance(f[2], list) and len(f[2]) == 1, fpath, f"field type must be a (type) form, got {dumps(f[2])}")
+        _expect(isinstance(f[2], list) and len(f[2]) in (1, 2), fpath, f"field type must be (type) or (ref Entity), got {dumps(f[2])}")
         ftype = _sym(f[2][0], fpath, "field type")
-        _expect(ftype in TYPES, fpath, f"unknown type '{ftype}' (allowed: {', '.join(TYPES)})")
-        fld = Field(name=fname, type=ftype)
+        if len(f[2]) == 2:
+            _expect(ftype == "ref", fpath, f"two-part field type must be (ref Entity), got {dumps(f[2])}")
+            fld = Field(name=fname, type="ref", ref_entity=_sym(f[2][1], fpath, "ref entity"))
+        else:
+            _expect(ftype in TYPES, fpath, f"unknown type '{ftype}' (allowed: {', '.join(TYPES)}, ref)")
+            fld = Field(name=fname, type=ftype)
         for opt in f[3:]:
             _expect(isinstance(opt, list) and opt and isinstance(opt[0], Sym), fpath, f"bad field option {dumps(opt)}")
             key = str(opt[0])
-            if key == "auto":
+            if key == "on-delete":
+                _expect(fld.type == "ref", fpath, "(on-delete ...) only applies to (ref Entity) fields")
+                _expect(len(opt) == 2 and str(opt[1]) in ("restrict", "cascade"), fpath, "(on-delete restrict|cascade)")
+                fld.on_delete = str(opt[1])
+            elif key == "auto":
                 _expect(len(opt) == 1, fpath, "(auto) takes no arguments")
                 _expect(ftype in AUTO_TYPES, fpath, f"(auto) only applies to types {', '.join(AUTO_TYPES)}")
                 fld.auto = True
@@ -363,9 +377,16 @@ def _load_query(node) -> Query:
     _expect(len(node) >= 2, path, "query needs a name")
     name = _sym(node[1], path, "query name")
     path = f"query {name}"
-    sections = _sections(node[2:], path, ["from", "where", "order-by"])
+    sections = _sections(node[2:], path, ["input", "from", "where", "order-by"])
     _expect("from" in sections and len(sections["from"]) == 1 and len(sections["from"][0]) == 2, path, "query needs exactly one (from Entity)")
     q = Query(name=name, entity=_sym(sections["from"][0][1], path, "entity"))
+    for inp in sections.get("input", []):
+        for spec in inp[1:]:
+            _expect(isinstance(spec, list) and len(spec) == 2, path, f"input must be (name type): {dumps(spec)}")
+            iname = _sym(spec[0], path, "input name")
+            itype = _sym(spec[1], path, "input type")
+            _expect(itype in TYPES, path, f"unknown input type '{itype}'")
+            q.inputs.append((iname, itype))
     if "where" in sections:
         _expect(len(sections["where"]) == 1 and len(sections["where"][0]) == 2, path, "(where expr) takes one expression")
         try:
@@ -395,7 +416,7 @@ def _load_component(node, path):
         _expect(len(node) == 2, path, "(heading \"text\")")
         return Heading(text=_str(node[1], path, "heading text"))
     if kind == "form":
-        sections = _sections(node[1:], path, ["action", "field"])
+        sections = _sections(node[1:], path, ["action", "field", "bind"])
         _expect("action" in sections and len(sections["action"][0]) == 2, path, "form needs (action name)")
         fields = []
         for f in sections.get("field", []):
@@ -406,13 +427,19 @@ def _load_component(node, path):
                 _expect(isinstance(opt, list) and len(opt) == 2 and opt[0] == Sym("label"), path, f"bad form field option {dumps(opt)}")
                 label = _str(opt[1], path, "label")
             fields.append(FormField(name=fname, label=label))
-        return Form(action=_sym(sections["action"][0][1], path, "form action"), fields=fields)
+        binds = []
+        for b in sections.get("bind", []):
+            _expect(len(b) == 3 and isinstance(b[1], Sym) and isinstance(b[2], Sym), path, f"bind must be (bind input row-field): {dumps(b)}")
+            binds.append((str(b[1]), str(b[2])))
+        return Form(action=_sym(sections["action"][0][1], path, "form action"), fields=fields, binds=binds)
     if kind == "list":
         sections = _sections(node[1:], path, ["query", "item"])
-        _expect("query" in sections and len(sections["query"][0]) == 2, path, "list needs (query name)")
+        _expect("query" in sections, path, "list needs (query name args...)")
+        qspec = sections["query"][0]
+        _expect(len(qspec) >= 2, path, "list needs (query name args...)")
         _expect("item" in sections and len(sections["item"]) == 1, path, "list needs exactly one (item ...)")
         item = [_load_component(c, path) for c in sections["item"][0][1:]]
-        return List(query=_sym(sections["query"][0][1], path, "list query"), item=item)
+        return List(query=_sym(qspec[1], path, "list query"), item=item, args=_load_args(qspec[2:], path))
     if kind == "text":
         _expect(len(node) == 2 and isinstance(node[1], Sym), path, "(text field)")
         return Text(field=str(node[1]))
@@ -478,7 +505,19 @@ def _load_case(node) -> TestCase:
                 steps.append(StepFail(action=action, args=args))
         elif kind == "check":
             _expect(len(s) >= 2, path, "(check query (expect expr)...) needs a query name")
-            query = _sym(s[1], path, "query")
+            qargs = []
+            if isinstance(s[1], list):
+                # parameterized: (check (query (param value)...) part...)
+                _expect(len(s[1]) >= 1, path, f"bad check query {dumps(s[1])}")
+                query = _sym(s[1][0], path, "query")
+                for a in s[1][1:]:
+                    _expect(isinstance(a, list) and len(a) == 2 and isinstance(a[0], Sym), path, f"query arg must be (input value): {dumps(a)}")
+                    try:
+                        qargs.append((str(a[0]), E.parse_expr(a[1]), E.to_source(a[1])))
+                    except E.ExprError as err:
+                        raise BundleError(path, str(err))
+            else:
+                query = _sym(s[1], path, "query")
             parts = []
             for part in s[2:]:
                 _expect(isinstance(part, list) and part and isinstance(part[0], Sym), path, f"bad check part {dumps(part)}")
@@ -498,7 +537,7 @@ def _load_case(node) -> TestCase:
                     parts.append(("row", part[1], _sym(part[2][1], path, "row binding name")))
                 else:
                     raise BundleError(path, f"check only takes (expect expr) and (row N (as name)): {dumps(part)}")
-            steps.append(StepCheck(query=query, parts=parts))
+            steps.append(StepCheck(query=query, parts=parts, args=qargs))
         else:
             raise BundleError(path, f"unknown step '{kind}' (allowed: do, fail, check)")
     return TestCase(name=name, steps=steps)
@@ -526,6 +565,26 @@ def _validate(app: App):
                 _expect(not f.auto, fpath, "(require) cannot apply to an (auto) field")
                 bad = E.free_names(f.require) - {f.name}
                 _expect(not bad, fpath, f"field require may only reference the field itself, found: {', '.join(sorted(bad))}")
+            if f.type == "ref":
+                _expect(not f.auto and not f.has_default, fpath, "(ref ...) fields cannot be (auto) or have a (default)")
+
+    # ref targets can only be checked once all entities are known
+    referenced_by = {}  # entity name -> [(child entity, field)]
+    for e in app.entities:
+        for f in e.fields:
+            if f.type == "ref":
+                fpath = f"entity {e.name}.{f.name}"
+                _expect(app.entity(f.ref_entity) is not None, fpath, f"(ref {f.ref_entity}) references unknown entity")
+                _expect(not (f.on_delete == "cascade" and f.ref_entity == e.name), fpath, "(on-delete cascade) is not allowed on a self-reference")
+                referenced_by.setdefault(f.ref_entity, []).append((e.name, f.name))
+    for e in app.entities:
+        for f in e.fields:
+            if f.type == "ref" and f.on_delete == "cascade":
+                _expect(f.ref_entity not in {e.name} or True, "", "")  # self-ref handled above
+                # cascading into an entity that is itself referenced would require
+                # transitive cascade planning; keep v0.3 one level deep
+                _expect(e.name not in referenced_by, f"entity {e.name}.{f.name}",
+                        f"(on-delete cascade) not allowed: {e.name} is itself referenced by another entity")
 
     seen = set()
     for q in app.queries:
@@ -535,10 +594,17 @@ def _validate(app: App):
         ent = app.entity(q.entity)
         _expect(ent is not None, qpath, f"unknown entity '{q.entity}'")
         fnames = {f.name for f in ent.fields}
+        inames = set()
+        for iname, _ in q.inputs:
+            _expect(iname not in inames, qpath, f"duplicate input '{iname}'")
+            _expect(iname not in fnames, qpath, f"query input '{iname}' collides with a field of {q.entity}; rename the input")
+            inames.add(iname)
         if q.where is not None:
-            bad = E.free_names(q.where) - fnames
-            _expect(not bad, qpath, f"where references unknown fields: {', '.join(sorted(bad))}")
+            bad = E.free_names(q.where) - fnames - inames
+            _expect(not bad, qpath, f"where references unknown fields/inputs: {', '.join(sorted(bad))}")
             _expect(not E.field_refs(q.where), qpath, "where uses bare field names, not (. row field)")
+        else:
+            _expect(not q.inputs, qpath, "query inputs require a (where ...) that uses them")
         if q.order_by is not None:
             _expect(q.order_by[0] in fnames, qpath, f"order-by references unknown field '{q.order_by[0]}'")
 
@@ -629,6 +695,15 @@ def _validate(app: App):
             else:  # StepCheck
                 query = app.query(step.query)
                 _expect(query is not None, cpath, f"unknown query '{step.query}'")
+                qinputs = {n for n, _ in query.inputs}
+                given = set()
+                for arg_name, value_expr, src in step.args:
+                    _expect(arg_name in qinputs, cpath, f"check arg '{arg_name}' is not an input of query '{step.query}'")
+                    _expect(arg_name not in given, cpath, f"check supplies arg '{arg_name}' twice")
+                    given.add(arg_name)
+                    bad = E.free_names(value_expr) - bound
+                    _expect(not bad, cpath, f"check value references unbound names: {', '.join(sorted(bad))} in {src}")
+                _expect(given == qinputs, cpath, f"check must supply all inputs of query '{step.query}': missing {', '.join(sorted(qinputs - given))}")
                 for part in step.parts:
                     if part[0] == "expect":
                         _, expr, src = part
@@ -650,19 +725,40 @@ def _validate(app: App):
             _validate_component(app, c, ppath)
 
 
-def _validate_component(app: App, c, ppath: str):
+def _validate_component(app: App, c, ppath: str, row_fields=None):
+    """Validate a component. row_fields is the parent row's field-name set
+    when the component sits inside a list (item ...), else None."""
+    if isinstance(c, Heading):
+        return
     if isinstance(c, Form):
         action = app.action(c.action)
         _expect(action is not None, ppath, f"form references unknown action '{c.action}'")
         inames = {n for n, _ in action.inputs}
-        form_names = set()
+        covered = set()
         for f in c.fields:
             _expect(f.name in inames, ppath, f"form field '{f.name}' is not an input of action '{c.action}'")
-            form_names.add(f.name)
-        _expect(form_names == inames, ppath, f"form for '{c.action}' must cover all inputs: missing {', '.join(sorted(inames - form_names))}")
-    elif isinstance(c, List):
+            _expect(f.name not in covered, ppath, f"form covers input '{f.name}' twice")
+            covered.add(f.name)
+        for input_name, row_field in c.binds:
+            _expect(row_fields is not None, ppath, "(bind ...) is only allowed on forms inside a list (item ...)")
+            _expect(input_name in inames, ppath, f"bind '{input_name}' is not an input of action '{c.action}'")
+            _expect(input_name not in covered, ppath, f"form covers input '{input_name}' twice")
+            _expect(row_field in row_fields, ppath, f"bind '{input_name}' pulls from unknown row field '{row_field}'")
+            covered.add(input_name)
+        _expect(covered == inames, ppath, f"form for '{c.action}' must cover all inputs: missing {', '.join(sorted(inames - covered))}")
+        return
+    if isinstance(c, List):
         query = app.query(c.query)
         _expect(query is not None, ppath, f"list references unknown query '{c.query}'")
+        qinputs = {n for n, _ in query.inputs}
+        given = set()
+        for input_name, row_field in c.args:
+            _expect(row_fields is not None, ppath, "a parameterized (query name (arg field)...) list is only allowed inside a list (item ...)")
+            _expect(input_name in qinputs, ppath, f"arg '{input_name}' is not an input of query '{c.query}'")
+            _expect(input_name not in given, ppath, f"list supplies query arg '{input_name}' twice")
+            _expect(row_field in row_fields, ppath, f"query arg '{input_name}' pulls from unknown row field '{row_field}'")
+            given.add(input_name)
+        _expect(given == qinputs, ppath, f"list must supply all inputs of query '{c.query}': missing {', '.join(sorted(qinputs - given))}")
         ent = app.entity(query.entity)
         fnames = {f.name for f in ent.fields}
         for item in c.item:
@@ -678,5 +774,9 @@ def _validate_component(app: App, c, ppath: str):
                     _expect(arg_name in inames, ppath, f"arg '{arg_name}' is not an input of action '{item.action}'")
                     _expect(row_field in fnames, ppath, f"arg '{arg_name}' pulls from unknown row field '{row_field}'")
                 _expect({n for n, _ in item.args} == inames, ppath, f"component for '{item.action}' must supply all inputs")
+            elif isinstance(item, (Form, List, Heading)):
+                _validate_component(app, item, ppath, row_fields=fnames)
             else:
                 raise BundleError(ppath, f"component {type(item).__name__} not allowed inside a list item")
+        return
+    raise BundleError(ppath, f"component {type(c).__name__} not allowed here")
