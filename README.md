@@ -53,6 +53,35 @@ on the first attempt — zero repair rounds** — and their feedback drove one
 language feature (ordering assertions in tests) and five guide fixes the
 same day. Details in [`experiments/2026-07-14-authoring.md`](experiments/2026-07-14-authoring.md).
 
+## How novel and valuable is this, honestly?
+
+Two adversarial research audits answer this
+([`research/05-novelty-audit.md`](research/05-novelty-audit.md),
+[`research/06-value-evidence.md`](research/06-value-evidence.md)):
+
+- **Novelty: ~65%.** The exact four-property combination (whole-app bundle +
+  deterministic compiler with hash identity + self-carried contracts and
+  tests + LLM-native authorship) appears unclaimed. The closest product,
+  Remy, matches the "spec is the program" shape but explicitly uses an LLM
+  as its compiler and accepts non-determinism — the precise bet UPL refuses.
+  Tessl folds on the same point. Wasp has the deterministic compiler but is
+  human-oriented, contract-free, and retreating from its own DSL. Caveat:
+  the field is visibly circling this gap — the loudest criticism of the
+  spec-driven-development wave is exactly "your regeneration is
+  non-deterministic" — so this is first-mover on an obvious-in-hindsight
+  synthesis, not a moat.
+- **Empirical value: ~25%.** Nobody (including us) has run the decisive
+  experiment: matched tasks, UPL-spec-plus-compiler vs. direct LLM codegen,
+  measuring correctness, review effort, and cost. Adjacent evidence is
+  favorable (type-constrained generation halves compile errors;
+  PlanCompiler's registry-constrained plan→compile pipeline reports 92.7%
+  vs 62-67% success and ~6-50x lower cost than direct generation) but the
+  bear case is real: direct codegen reliability is improving fast, and the
+  one benchmark comparing spec-writing to code-writing found *formal* specs
+  harder for LLMs — though our own n=7 first-try results suggest
+  CRUD-shaped specs don't suffer this. The single most valuable next step
+  is the matched-task benchmark, which this repo can run as-is.
+
 A second round ([`experiments/2026-07-14-limits.md`](experiments/2026-07-14-limits.md))
 probed the edges: a **maintenance** round (extend an existing bundle without
 breaking its contracts — the failure mode that killed model-driven
