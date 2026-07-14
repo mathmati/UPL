@@ -37,6 +37,8 @@ class Field:
     ref_entity: str = ""  # set when type == "ref"
     on_delete: str = "restrict"  # ref fields: restrict | cascade
     auto: bool = False
+    auto_user: bool = False  # (auto @user): ref User field filled from the session
+    unique: bool = False
     default: object = None
     has_default: bool = False
     require: object = None  # parsed expr
@@ -47,6 +49,19 @@ class Field:
 class Entity:
     name: str
     fields: list
+
+
+@dataclass
+class Allow:
+    kind: str  # "anyone" | "signed-in" | "role" | "owner"
+    arg: str = ""  # role name (kind=role) or row field name (kind=owner)
+
+
+@dataclass
+class Auth:
+    roles: list
+    default_role: str
+    first_user_role: str
 
 
 @dataclass
@@ -75,6 +90,7 @@ class Action:
     requires: list  # [(expr, src)]
     effect: object  # Insert | Update | Delete
     ensures: list  # [(expr, src)]
+    allows: list = dc_field(default_factory=list)  # [Allow]; OR semantics
 
 
 @dataclass
@@ -85,6 +101,7 @@ class Query:
     where: object = None  # parsed expr or None
     where_src: str = ""
     order_by: object = None  # (field, "asc"|"desc") or None
+    allows: list = dc_field(default_factory=list)  # [Allow]; OR semantics; no "owner" kind
 
 
 @dataclass
@@ -139,17 +156,25 @@ class Page:
 
 
 @dataclass
+class StepUser:
+    name: str  # binding name; also becomes <name>@test as the email
+    role: str
+
+
+@dataclass
 class StepDo:
     action: str
     args: list  # [(input_name, value_expr, src)]
     bind: str = ""  # (as name) — binds the result row
     expects: list = dc_field(default_factory=list)  # [(expr, src)]
+    by: str = ""  # (by user-binding) — acting user; empty = anonymous
 
 
 @dataclass
 class StepFail:
     action: str
     args: list  # [(input_name, value_expr, src)]
+    by: str = ""
 
 
 @dataclass
@@ -157,6 +182,7 @@ class StepCheck:
     query: str
     parts: list  # ordered: ("expect", expr, src) | ("row", index, bind_name)
     args: list = dc_field(default_factory=list)  # [(query_input, value_expr, src)]
+    by: str = ""
 
 
 @dataclass
@@ -172,6 +198,7 @@ class App:
     actions: list
     queries: list
     pages: list
+    auth: object = None  # Auth | None
     tests: list = dc_field(default_factory=list)
     canonical: str = ""
     bundle_hash: str = ""
@@ -236,7 +263,7 @@ def _load_tree(tree) -> App:
     # so historical bundles (e.g. experiments/benchmark/) still compile.
     _expect(isinstance(tree, list) and len(tree) >= 2 and tree[0] in (Sym("miura"), Sym("upl")), path, "bundle must start with (miura 0.1 ...)")
     _expect(str(tree[1]) == "0.1", path, f"unsupported version {tree[1]!r}, expected 0.1")
-    sections = _sections(tree[2:], path, ["intent", "schema", "workflow", "ui", "tests"])
+    sections = _sections(tree[2:], path, ["intent", "auth", "schema", "workflow", "ui", "tests"])
     for required in ("intent", "schema", "workflow", "ui"):
         _expect(required in sections, path, f"missing ({required} ...) section")
     for name in sections:
@@ -252,11 +279,46 @@ def _load_tree(tree) -> App:
 
     pages = [_load_page(p) for p in _sections(sections["ui"][0][1:], "ui", ["page"]).get("page", [])]
 
+    auth = _load_auth(sections["auth"][0]) if "auth" in sections else None
+
     tests = []
     if "tests" in sections:
         tests = [_load_case(c) for c in _sections(sections["tests"][0][1:], "tests", ["case"]).get("case", [])]
 
-    return App(intent=intent, entities=entities, actions=actions, queries=queries, pages=pages, tests=tests)
+    return App(intent=intent, entities=entities, actions=actions, queries=queries, pages=pages, auth=auth, tests=tests)
+
+
+def _load_auth(node) -> Auth:
+    path = "auth"
+    sections = _sections(node[1:], path, ["roles", "default-role", "first-user-role"])
+    _expect("roles" in sections and len(sections["roles"][0]) >= 2, path, "(auth ...) needs (roles name...)")
+    roles = [_sym(r, path, "role name") for r in sections["roles"][0][1:]]
+    _expect(len(roles) == len(set(roles)), path, "duplicate role names")
+
+    def _role_opt(key, fallback):
+        if key in sections:
+            _expect(len(sections[key][0]) == 2, path, f"({key} role) takes one role name")
+            role = _sym(sections[key][0][1], path, "role name")
+            _expect(role in roles, path, f"({key} {role}): unknown role")
+            return role
+        return fallback
+
+    default_role = _role_opt("default-role", roles[0] if len(roles) == 1 else None)
+    _expect(default_role is not None, path, "(default-role name) is required when there is more than one role")
+    first_user_role = _role_opt("first-user-role", default_role)
+    return Auth(roles=roles, default_role=default_role, first_user_role=first_user_role)
+
+
+def _load_allow(node, path, roles_hint="admin") -> Allow:
+    _expect(len(node) == 2, path, "(allow rule) takes exactly one rule")
+    rule = node[1]
+    if isinstance(rule, Sym):
+        _expect(str(rule) in ("anyone", "signed-in"), path, f"unknown allow rule '{rule}' (allowed: anyone, signed-in, (role name), (owner field))")
+        return Allow(kind=str(rule))
+    _expect(isinstance(rule, list) and len(rule) == 2 and isinstance(rule[0], Sym) and isinstance(rule[1], Sym), path, f"allow rule must be anyone, signed-in, (role name), or (owner field): {dumps(node)}")
+    kind = str(rule[0])
+    _expect(kind in ("role", "owner"), path, f"unknown allow rule '{kind}'")
+    return Allow(kind=kind, arg=str(rule[1]))
 
 
 def _load_entity(node) -> Entity:
@@ -284,10 +346,19 @@ def _load_entity(node) -> Entity:
                 _expect(fld.type == "ref", fpath, "(on-delete ...) only applies to (ref Entity) fields")
                 _expect(len(opt) == 2 and str(opt[1]) in ("restrict", "cascade"), fpath, "(on-delete restrict|cascade)")
                 fld.on_delete = str(opt[1])
+            elif key == "unique":
+                _expect(len(opt) == 1, fpath, "(unique) takes no arguments")
+                _expect(fld.type in ("text", "int", "id") or fld.type == "ref", fpath, "(unique) applies to text, int, or ref fields")
+                fld.unique = True
             elif key == "auto":
-                _expect(len(opt) == 1, fpath, "(auto) takes no arguments")
-                _expect(ftype in AUTO_TYPES, fpath, f"(auto) only applies to types {', '.join(AUTO_TYPES)}")
-                fld.auto = True
+                if len(opt) == 2 and opt[1] == Sym("@user"):
+                    _expect(fld.type == "ref" and fld.ref_entity == "User", fpath, "(auto @user) only applies to (ref User) fields")
+                    fld.auto = True
+                    fld.auto_user = True
+                else:
+                    _expect(len(opt) == 1, fpath, "(auto) takes no arguments (except (auto @user) on a (ref User) field)")
+                    _expect(ftype in AUTO_TYPES, fpath, f"(auto) only applies to types {', '.join(AUTO_TYPES)}")
+                    fld.auto = True
             elif key == "default":
                 _expect(len(opt) == 2, fpath, "(default value) takes one literal")
                 _expect(not isinstance(opt[1], (list, Sym)), fpath, "default must be a literal")
@@ -322,7 +393,7 @@ def _load_action(node) -> Action:
     _expect(len(node) >= 2, path, "action needs a name")
     name = _sym(node[1], path, "action name")
     path = f"action {name}"
-    sections = _sections(node[2:], path, ["input", "requires", "effect", "ensures"])
+    sections = _sections(node[2:], path, ["allow", "input", "requires", "effect", "ensures"])
     _expect("effect" in sections and len(sections["effect"]) == 1, path, "action needs exactly one (effect ...)")
 
     inputs = []
@@ -371,7 +442,8 @@ def _load_action(node) -> Action:
     else:
         raise BundleError(path, f"unknown effect '{kind}' (allowed: insert, update, delete)")
 
-    return Action(name=name, inputs=inputs, requires=requires, effect=effect, ensures=ensures)
+    allows = [_load_allow(a, path) for a in sections.get("allow", [])]
+    return Action(name=name, inputs=inputs, requires=requires, effect=effect, ensures=ensures, allows=allows)
 
 
 def _load_query(node) -> Query:
@@ -379,7 +451,7 @@ def _load_query(node) -> Query:
     _expect(len(node) >= 2, path, "query needs a name")
     name = _sym(node[1], path, "query name")
     path = f"query {name}"
-    sections = _sections(node[2:], path, ["input", "from", "where", "order-by"])
+    sections = _sections(node[2:], path, ["allow", "input", "from", "where", "order-by"])
     _expect("from" in sections and len(sections["from"]) == 1 and len(sections["from"][0]) == 2, path, "query needs exactly one (from Entity)")
     q = Query(name=name, entity=_sym(sections["from"][0][1], path, "entity"))
     for inp in sections.get("input", []):
@@ -400,6 +472,7 @@ def _load_query(node) -> Query:
         ob = sections["order-by"][0]
         _expect(len(ob) == 3 and str(ob[2]) in ("asc", "desc"), path, "(order-by field asc|desc)")
         q.order_by = (_sym(ob[1], path, "order-by field"), str(ob[2]))
+    q.allows = [_load_allow(a, path) for a in sections.get("allow", [])]
     return q
 
 
@@ -479,16 +552,22 @@ def _load_case(node) -> TestCase:
     for s in node[2:]:
         _expect(isinstance(s, list) and s and isinstance(s[0], Sym), path, f"bad step {dumps(s)}")
         kind = str(s[0])
-        if kind in ("do", "fail"):
+        if kind == "user":
+            _expect(len(s) == 3, path, "(user name role) takes a binding name and a role")
+            steps.append(StepUser(name=_sym(s[1], path, "user binding"), role=_sym(s[2], path, "role")))
+        elif kind in ("do", "fail"):
             _expect(len(s) >= 2, path, f"({kind} action ...) needs an action name")
             action = _sym(s[1], path, "action")
-            args, bind, expects = [], "", []
+            args, bind, expects, by = [], "", [], ""
             for part in s[2:]:
                 _expect(isinstance(part, list) and part and isinstance(part[0], Sym), path, f"bad step part {dumps(part)}")
                 key = str(part[0])
                 if key == "as":
                     _expect(kind == "do" and len(part) == 2, path, "(as name) applies to do steps only")
                     bind = _sym(part[1], path, "binding name")
+                elif key == "by":
+                    _expect(len(part) == 2, path, "(by user-binding) takes one name")
+                    by = _sym(part[1], path, "acting user")
                 elif key == "expect":
                     _expect(kind == "do" and len(part) == 2, path, "(expect expr) applies to do steps only")
                     try:
@@ -502,9 +581,9 @@ def _load_case(node) -> TestCase:
                     except E.ExprError as err:
                         raise BundleError(path, str(err))
             if kind == "do":
-                steps.append(StepDo(action=action, args=args, bind=bind, expects=expects))
+                steps.append(StepDo(action=action, args=args, bind=bind, expects=expects, by=by))
             else:
-                steps.append(StepFail(action=action, args=args))
+                steps.append(StepFail(action=action, args=args, by=by))
         elif kind == "check":
             _expect(len(s) >= 2, path, "(check query (expect expr)...) needs a query name")
             qargs = []
@@ -521,10 +600,14 @@ def _load_case(node) -> TestCase:
             else:
                 query = _sym(s[1], path, "query")
             parts = []
+            check_by = ""
             for part in s[2:]:
                 _expect(isinstance(part, list) and part and isinstance(part[0], Sym), path, f"bad check part {dumps(part)}")
                 key = str(part[0])
-                if key == "expect":
+                if key == "by":
+                    _expect(len(part) == 2, path, "(by user-binding) takes one name")
+                    check_by = _sym(part[1], path, "acting user")
+                elif key == "expect":
                     _expect(len(part) == 2, path, f"(expect expr) takes one expression: {dumps(part)}")
                     try:
                         parts.append(("expect", E.parse_expr(part[1]), E.to_source(part[1])))
@@ -538,18 +621,48 @@ def _load_case(node) -> TestCase:
                     )
                     parts.append(("row", part[1], _sym(part[2][1], path, "row binding name")))
                 else:
-                    raise BundleError(path, f"check only takes (expect expr) and (row N (as name)): {dumps(part)}")
-            steps.append(StepCheck(query=query, parts=parts, args=qargs))
+                    raise BundleError(path, f"check only takes (expect expr), (row N (as name)), and (by user): {dumps(part)}")
+            steps.append(StepCheck(query=query, parts=parts, args=qargs, by=check_by))
         else:
-            raise BundleError(path, f"unknown step '{kind}' (allowed: do, fail, check)")
+            raise BundleError(path, f"unknown step '{kind}' (allowed: user, do, fail, check)")
     return TestCase(name=name, steps=steps)
 
 
 # ---------------------------------------------------------------- validation
 
 
+def _signed_in_guaranteed(allows) -> bool:
+    return bool(allows) and all(a.kind != "anyone" for a in allows)
+
+
 def _validate(app: App):
     _expect(app.entities, "schema", "at least one entity is required")
+
+    # --- auth normalization and gating -------------------------------------
+    if app.auth:
+        _expect(app.entity("User") is None, "schema", "'User' is a reserved entity name when (auth ...) is present")
+        for a in app.actions:
+            if not a.allows:
+                a.allows = [Allow(kind="signed-in")]
+        for q in app.queries:
+            if not q.allows:
+                q.allows = [Allow(kind="signed-in")]
+    else:
+        for a in app.actions:
+            _expect(not a.allows, f"action {a.name}", "(allow ...) requires an (auth ...) section")
+            a.allows = [Allow(kind="anyone")]
+        for q in app.queries:
+            _expect(not q.allows, f"query {q.name}", "(allow ...) requires an (auth ...) section")
+            q.allows = [Allow(kind="anyone")]
+
+    def _check_allows(allows, path, entity=None, effect=None):
+        for al in allows:
+            if al.kind == "role":
+                _expect(app.auth and al.arg in app.auth.roles, path, f"(allow (role {al.arg})): unknown role")
+            elif al.kind == "owner":
+                _expect(effect is not None and isinstance(effect, (Update, Delete)), path, "(allow (owner field)) only applies to update/delete actions")
+                fields = {f.name: f for f in entity.fields}
+                _expect(al.arg in fields and fields[al.arg].type == "ref" and fields[al.arg].ref_entity == "User", path, f"(allow (owner {al.arg})): '{al.arg}' must be a (ref User) field of {entity.name}")
 
     seen = set()
     for e in app.entities:
@@ -568,7 +681,8 @@ def _validate(app: App):
                 bad = E.free_names(f.require) - {f.name}
                 _expect(not bad, fpath, f"field require may only reference the field itself, found: {', '.join(sorted(bad))}")
             if f.type == "ref":
-                _expect(not f.auto and not f.has_default, fpath, "(ref ...) fields cannot be (auto) or have a (default)")
+                _expect(not f.has_default, fpath, "(ref ...) fields cannot have a (default)")
+                _expect(not f.auto or f.auto_user, fpath, "(ref ...) fields cannot be (auto) — except (auto @user) on (ref User)")
 
     # ref targets can only be checked once all entities are known
     referenced_by = {}  # entity name -> [(child entity, field)]
@@ -576,6 +690,9 @@ def _validate(app: App):
         for f in e.fields:
             if f.type == "ref":
                 fpath = f"entity {e.name}.{f.name}"
+                if f.ref_entity == "User":
+                    _expect(app.auth is not None, fpath, "(ref User) requires an (auth ...) section")
+                    continue
                 _expect(app.entity(f.ref_entity) is not None, fpath, f"(ref {f.ref_entity}) references unknown entity")
                 _expect(not (f.on_delete == "cascade" and f.ref_entity == e.name), fpath, "(on-delete cascade) is not allowed on a self-reference")
                 referenced_by.setdefault(f.ref_entity, []).append((e.name, f.name))
@@ -596,14 +713,17 @@ def _validate(app: App):
         ent = app.entity(q.entity)
         _expect(ent is not None, qpath, f"unknown entity '{q.entity}'")
         fnames = {f.name for f in ent.fields}
+        _check_allows(q.allows, qpath)
         inames = set()
         for iname, _ in q.inputs:
             _expect(iname not in inames, qpath, f"duplicate input '{iname}'")
             _expect(iname not in fnames, qpath, f"query input '{iname}' collides with a field of {q.entity}; rename the input")
             inames.add(iname)
+        auth_names = {"@user"} if app.auth and _signed_in_guaranteed(q.allows) else set()
         if q.where is not None:
-            bad = E.free_names(q.where) - fnames - inames
-            _expect(not bad, qpath, f"where references unknown fields/inputs: {', '.join(sorted(bad))}")
+            bad = E.free_names(q.where) - fnames - inames - auth_names
+            _expect(not bad, qpath, f"where references unknown fields/inputs: {', '.join(sorted(bad))}"
+                    + (" (@user needs a signed-in guarantee: no (allow anyone))" if "@user" in bad else ""))
             _expect(not E.field_refs(q.where), qpath, "where uses bare field names, not (. row field)")
         else:
             _expect(not q.inputs, qpath, "query inputs require a (where ...) that uses them")
@@ -624,6 +744,12 @@ def _validate(app: App):
         ent = app.entity(a.effect.entity)
         _expect(ent is not None, apath, f"effect references unknown entity '{a.effect.entity}'")
         fields = {f.name: f for f in ent.fields}
+        _check_allows(a.allows, apath, ent, a.effect)
+        auth_names = {"@user"} if app.auth and _signed_in_guaranteed(a.allows) else set()
+        inames = inames | auth_names
+
+        if isinstance(a.effect, Insert) and any(f.auto_user for f in ent.fields):
+            _expect(_signed_in_guaranteed(a.allows), apath, f"insert into {ent.name} fills an (auto @user) field, so the action needs a signed-in guarantee (no (allow anyone))")
 
         for expr, src in a.requires:
             bad = E.free_names(expr) - inames
@@ -669,6 +795,7 @@ def _validate(app: App):
         _expect(case.name not in seen, cpath, "duplicate case name")
         seen.add(case.name)
         bound = set()
+        user_bindings = set()
 
         def _check_step_args(action, args, what):
             inames = {n for n, _ in action.inputs}
@@ -682,7 +809,15 @@ def _validate(app: App):
             _expect(given == inames, cpath, f"{what} must supply all inputs of '{action.name}': missing {', '.join(sorted(inames - given))}")
 
         for step in case.steps:
-            if isinstance(step, (StepDo, StepFail)):
+            if isinstance(step, StepUser):
+                _expect(app.auth is not None, cpath, "(user ...) steps require an (auth ...) section")
+                _expect(step.role in app.auth.roles, cpath, f"(user {step.name} {step.role}): unknown role")
+                _expect(step.name not in bound and step.name not in ("result", "current"), cpath, f"binding '{step.name}' already used")
+                bound.add(step.name)
+                user_bindings.add(step.name)
+            elif isinstance(step, (StepDo, StepFail)):
+                if step.by:
+                    _expect(step.by in user_bindings, cpath, f"(by {step.by}): no prior (user {step.by} role) step")
                 action = app.action(step.action)
                 _expect(action is not None, cpath, f"unknown action '{step.action}'")
                 _check_step_args(action, step.args, "do" if isinstance(step, StepDo) else "fail")
@@ -695,6 +830,8 @@ def _validate(app: App):
                         _expect(step.bind not in bound, cpath, f"binding '{step.bind}' already used")
                         bound.add(step.bind)
             else:  # StepCheck
+                if step.by:
+                    _expect(step.by in user_bindings, cpath, f"(by {step.by}): no prior (user {step.by} role) step")
                 query = app.query(step.query)
                 _expect(query is not None, cpath, f"unknown query '{step.query}'")
                 qinputs = {n for n, _ in query.inputs}

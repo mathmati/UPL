@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "miurac"
+version = "0.4.0"
+description = "Miura — an AI-native application language: one contract-carrying bundle, deterministically unfolded into a runnable app."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["miura", "dsl", "compiler", "ai", "llm", "contracts"]
+
+[project.urls]
+Repository = "https://github.com/mathmati/UPL"
+
+[project.scripts]
+miurac = "miurac.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["compiler"]
+
+[tool.setuptools.package-dir]
+"" = "compiler"

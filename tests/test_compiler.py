@@ -99,7 +99,7 @@ class TestBundleTests(unittest.TestCase):
         results = self.run_bundle(bad)
         case = next(r for r in results if r.name == "contracts_reject_bad_titles")
         self.assertFalse(case.ok)
-        self.assertIn("expected a contract rejection", case.failures[0])
+        self.assertIn("expected a contract or permission rejection", case.failures[0])
 
     def test_row_binding_asserts_ordering(self):
         results = self.run_bundle(read_example())
@@ -131,6 +131,58 @@ class TestBundleTests(unittest.TestCase):
         with self.assertRaises(BundleError) as ctx:
             load(bad)
         self.assertIn("unbound names: ghost", str(ctx.exception))
+
+
+AUTH_EXAMPLE = os.path.join(ROOT, "examples", "team-tasks.miura")
+
+
+def read_auth_example():
+    with open(AUTH_EXAMPLE, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+class TestAuth(unittest.TestCase):
+    def assert_error(self, text, fragment):
+        with self.assertRaises(BundleError) as ctx:
+            load(text)
+        self.assertIn(fragment, str(ctx.exception))
+
+    def test_auth_example_loads_and_passes(self):
+        from miurac.runner import run_tests
+        app = load(read_auth_example())
+        self.assertEqual(app.auth.roles, ["admin", "member"])
+        results = run_tests(app)
+        self.assertTrue(all(r.ok for r in results), [(r.name, r.failures) for r in results])
+
+    def test_allow_without_auth_rejected(self):
+        bad = read_example().replace("(action create_task", "(action create_task\n      (allow signed-in)", 1)
+        self.assert_error(bad, "(allow ...) requires an (auth ...) section")
+
+    def test_unknown_role_rejected(self):
+        bad = read_auth_example().replace("(allow (role admin))", "(allow (role superuser))")
+        self.assert_error(bad, "unknown role")
+
+    def test_owner_rule_requires_ref_user_field(self):
+        bad = read_auth_example().replace("(allow (owner owner))", "(allow (owner title))", 1)
+        self.assert_error(bad, "must be a (ref User) field")
+
+    def test_at_user_needs_signed_in_guarantee(self):
+        bad = read_auth_example().replace(
+            "(query my_tasks\n      (allow signed-in)", "(query my_tasks\n      (allow anyone)", 1)
+        self.assert_error(bad, "@user")
+
+    def test_by_requires_prior_user_step(self):
+        bad = read_auth_example().replace("(user alice member)\n      (user bob member)", "(user bob member)", 1)
+        self.assert_error(bad, "(by alice): no prior (user alice role) step")
+
+    def test_unique_violation_at_runtime(self):
+        from miurac.runner import run_tests
+        bad = read_auth_example().replace('(fail create_task (slug "one-slug") (title "Second") (by gene))',
+                                          '(do create_task (slug "one-slug") (title "Second") (by gene))')
+        results = run_tests(load(bad))
+        case = next(r for r in results if r.name == "slugs_are_unique")
+        self.assertFalse(case.ok)
+        self.assertIn("unique constraint violated", case.failures[0])
 
 
 class TestUnpack(unittest.TestCase):

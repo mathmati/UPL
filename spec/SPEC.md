@@ -61,6 +61,8 @@ Field options:
 - `(require expr)` — invariant checked on every insert and on every
   update that assigns the field. May reference only the field's own
   name (which is bound to the candidate value).
+- `(unique)` — no two rows may share the value; conflicting writes are
+  rejected (400).
 - `(on-delete restrict|cascade)` — ref fields only; default `restrict`.
 
 Every entity must have exactly one `(field ... (id) (auto))`.
@@ -71,6 +73,38 @@ matching row is rejected (400). Deleting a row referenced by a
 rows first (all restrict checks run before any cascade deletes).
 Cascade is not allowed on a self-reference, nor into an entity that is
 itself referenced (cascades are one level deep by construction).
+
+### auth (optional)
+
+```
+(auth (roles r1 r2 ...) (default-role r) (first-user-role r))
+```
+
+Declares a multi-user app. The compiler injects: a reserved `User`
+entity (id, email `(unique)`, role; password data never leaves the
+server), `session` storage, endpoints `POST /api/auth/signup|login|logout`
+and `GET /api/auth/me` (cookie sessions, PBKDF2 password hashing), and a
+login bar in the generated UI. `User` cannot be targeted by effects or
+queries.
+
+Permissions: actions and queries take `(allow rule)` clauses, OR'd:
+`anyone`, `signed-in`, `(role name)`, and — update/delete only —
+`(owner field)` where `field` is a `(ref User)` field of the effect
+entity that must equal the caller. **With an `(auth ...)` section
+present, the default is `(allow signed-in)`.** Violations: 401
+(anonymous) / 403 (signed in). Checks are compiled into the generated
+code ahead of contracts; owner checks run against the fetched row before
+any mutation.
+
+`@user` (the caller's id) is available in `requires`/effect
+exprs/`ensures`/query `where` wherever sign-in is guaranteed (no
+`(allow anyone)`). `(field owner (ref User) (auto @user))` fills
+ownership on insert.
+
+Tests: `(user name role)` creates a user bound to `name` (a row —
+`(. name id)` works); `(by name)` on do/fail/check steps acts as them;
+no `(by ...)` = anonymous. `fail` treats permission denials as expected
+rejections.
 
 ### workflow
 

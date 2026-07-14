@@ -44,6 +44,7 @@ def _ui_model(app: App) -> dict:
             for p in app.pages
         ],
         "inputTypes": input_types,
+        "auth": bool(app.auth),
     }
 
 
@@ -63,6 +64,9 @@ button { padding: 0.4rem 0.8rem; font-size: 0.95rem; cursor: pointer; }
 .miura-nested { margin-left: 1.2rem; }
 .miura-subheading { font-size: 1rem; margin: 0.3rem 0 0; }
 #miura-error { color: #b3261e; min-height: 1.4em; font-size: 0.9rem; }
+#miura-auth { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; margin-bottom: 0.5rem; font-size: 0.9rem; }
+#miura-auth form { display: flex; gap: 0.4rem; margin: 0; }
+#miura-auth input { padding: 0.3rem 0.5rem; }
 .miura-nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
 """
 
@@ -220,7 +224,52 @@ function renderComponent(c, root) {
   }
 }
 
+async function renderAuthBar() {
+  const bar = document.getElementById('miura-auth');
+  bar.replaceChildren();
+  let me = null;
+  try { me = await api('/api/auth/me'); } catch (err) { showError(err.message); }
+  if (me) {
+    const who = document.createElement('span');
+    who.textContent = me.email + ' (' + me.role + ')';
+    const out = document.createElement('button');
+    out.textContent = 'Log out';
+    out.addEventListener('click', async () => {
+      try { await api('/api/auth/logout', { method: 'POST' }); } catch (err) { showError(err.message); }
+      location.reload();
+    });
+    bar.append(who, out);
+  } else {
+    const form = document.createElement('form');
+    const email = document.createElement('input');
+    email.type = 'email'; email.name = 'email'; email.placeholder = 'email'; email.required = true;
+    const password = document.createElement('input');
+    password.type = 'password'; password.name = 'password'; password.placeholder = 'password (8+ chars)'; password.required = true;
+    const login = document.createElement('button');
+    login.type = 'submit'; login.textContent = 'Log in';
+    const signup = document.createElement('button');
+    signup.type = 'button'; signup.textContent = 'Sign up';
+    const submit = async (path) => {
+      try {
+        await api(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email.value, password: password.value }),
+        });
+        location.reload();
+      } catch (err) {
+        showError(err.message);
+      }
+    };
+    form.addEventListener('submit', (ev) => { ev.preventDefault(); submit('/api/auth/login'); });
+    signup.addEventListener('click', () => submit('/api/auth/signup'));
+    form.append(email, password, login, signup);
+    bar.appendChild(form);
+  }
+}
+
 function main() {
+  if (UI_MODEL.auth) renderAuthBar();
   const root = document.getElementById('miura-root');
   const page = UI_MODEL.pages.find((p) => p.route === location.pathname) || UI_MODEL.pages[0];
   if (UI_MODEL.pages.length > 1) {
@@ -262,6 +311,7 @@ def emit_web(app: App, header: str) -> str:
 </head>
 <body>
 <div id="miura-error"></div>
+<div id="miura-auth"></div>
 <div id="miura-root"></div>
 <script>
 const UI_MODEL = {model};

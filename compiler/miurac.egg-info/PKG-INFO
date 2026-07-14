@@ -1,3 +1,13 @@
+Metadata-Version: 2.4
+Name: miurac
+Version: 0.4.0
+Summary: Miura — an AI-native application language: one contract-carrying bundle, deterministically unfolded into a runnable app.
+License: MIT
+Project-URL: Repository, https://github.com/mathmati/UPL
+Keywords: miura,dsl,compiler,ai,llm,contracts
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+
 # Miura — an AI-native application language
 
 *Formerly "UPL"; renamed after a naming audit ([`research/07-naming.md`](research/07-naming.md)) — the [Miura fold](https://en.wikipedia.org/wiki/Miura_fold) is the origami fold that collapses and deploys identically every time, which is this language's core property: one small folded bundle, deterministically unfolded into a whole application. (GitHub repo name pending rename.)*
@@ -13,25 +23,23 @@ This repo contains both the research that scoped the idea and a **working v0.1 i
 ## Quickstart
 
 ```sh
-pip install -e .                          # gives you the `miurac` command
+# validate a bundle (add --json for machine-readable diagnostics)
+PYTHONPATH=compiler python3 -m miurac check examples/tasks.miura
 
-miurac check examples/team-tasks.miura    # validate (--json for agents)
-miurac test  examples/team-tasks.miura    # run the bundle's own acceptance tests
-miurac unpack examples/team-tasks.miura -o build
+# run the bundle's own acceptance tests against its unpacked app
+PYTHONPATH=compiler python3 -m miurac test examples/tasks.miura
 
-python3 build/server/app.py               # → http://127.0.0.1:8000
-                                          # zero dependencies — stdlib only
+# unpack it into runnable targets
+PYTHONPATH=compiler python3 -m miurac unpack examples/tasks.miura -o build
 
-python3 -m unittest discover -s tests     # compiler test suite
+# run the generated app (zero dependencies — stdlib only)
+python3 build/server/app.py     # → http://127.0.0.1:8000
+
+# run the test suite (20 tests, incl. end-to-end against the generated server)
+python3 -m unittest discover -s tests
 ```
 
-Start with [`examples/tasks.miura`](examples/tasks.miura) — a complete task
-tracker in 36 lines — or [`examples/team-tasks.miura`](examples/team-tasks.miura),
-the v0.4 flagship: a **multi-user** task board with roles, ownership rules,
-`@user`-scoped queries, and unique slugs, where sign-up/login/sessions and
-every permission check are compiled from ~100 lines of bundle. To write your
-own, hand [`docs/miura-for-agents.md`](docs/miura-for-agents.md) to any
-capable LLM with a paragraph describing your app.
+The demo bundle ([`examples/tasks.miura`](examples/tasks.miura)) is a complete task tracker — schema, actions with `requires`/`ensures` contracts, a query, and a UI — in 36 lines of Miura. It unpacks into ~340 lines of Python, HTML/JS, and SQL.
 
 ## Layout
 

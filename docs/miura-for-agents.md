@@ -27,11 +27,53 @@ strings (quotes).
 ```
 (miura 0.1
   (intent "One paragraph: what the app does, in plain language.")
+  (auth ...)          ; optional — only for multi-user apps
   (schema ...)
   (workflow ...)
   (ui ...)
   (tests ...))
 ```
+
+## auth — users, roles, and permissions (optional section)
+
+For multi-user apps, declare:
+
+```
+(auth
+  (roles admin member)        ; role names, your choice
+  (default-role member)       ; role new signups get (required if >1 role)
+  (first-user-role admin))    ; role of the very first signup (optional)
+```
+
+What you get automatically: a built-in `User` entity (never declare your
+own), signup/login/logout endpoints, sessions, and a login bar in the UI.
+`User` cannot be the target of your actions or queries; you interact with
+it through references and rules:
+
+- **Ownership**: `(field owner (ref User) (auto @user))` — filled with
+  the signed-in user's id on insert. Never assign it in an effect.
+- **`@user`** in expressions = the signed-in user's id:
+  `(where (= owner @user))`, `(ensures (= (. result owner) @user))`.
+- **Permissions** on actions/queries, checked before anything runs.
+  Multiple `allow` clauses are OR'd:
+
+  ```
+  (allow anyone)          ; no sign-in needed
+  (allow signed-in)       ; any signed-in user (note: bare word, no parens)
+  (allow (role admin))    ; specific role
+  (allow (owner owner))   ; update/delete only: current row's (ref User)
+                          ; field named 'owner' must equal @user
+  ```
+
+  When an `(auth ...)` section exists, **the default is `(allow signed-in)`**
+  — anonymous visitors can do and see nothing unless you say
+  `(allow anyone)` explicitly. `@user` and `(auto @user)` are only legal
+  where sign-in is guaranteed (i.e. not with `(allow anyone)`).
+- Rejections: anonymous → 401, signed-in but not allowed → 403.
+
+Rules of thumb: put `(allow (owner field))` on update/delete of
+user-owned rows; add `(allow (role admin))` alongside it if admins may
+override; scope "my things" queries with `(where (= owner @user))`.
 
 ## schema — entities and fields
 
@@ -53,6 +95,8 @@ Rules:
 - `(require expr)`: an invariant checked on insert/update. It may reference
   **only the field's own name** (bound to the candidate value). Works for any
   type — text length checks and numeric bounds alike.
+- `(unique)`: no two rows may share this field's value (e.g. emails,
+  slugs). A conflicting write is rejected with 400.
 - **Relations**: `(field post (ref Post))` stores the id of an existing `Post`
   row. Writes that point at a missing row are rejected (contract violation).
   Deleting a referenced row is rejected by default; add `(on-delete cascade)`
@@ -188,6 +232,20 @@ Rules:
 
 Rules:
 - Each case runs on a **fresh empty database**.
+- **Auth apps**: create users with `(user name role)` steps, then act as
+  them with `(by name)` on do/fail/check steps. The binding is a row —
+  `(. alice id)` works. A step without `(by ...)` runs anonymously (use
+  this to test that anonymous access is rejected). Example:
+
+  ```
+  (case ownership
+    (user alice member)
+    (user bob member)
+    (do create_task (title "hers") (by alice) (as t))
+    (fail delete_task (id (. t id)) (by bob))
+    (fail create_task (title "anon"))
+    (check my_tasks (by alice) (expect (= (len result) 1))))
+  ```
 - `(do action (input value)... (as name) (expect expr)...)` — runs an action.
   `(as t)` binds the result row; later steps reference it as `(. t field)`.
   `expect` sees `result` (this step's row) plus earlier bindings.
@@ -218,6 +276,15 @@ Rules:
 9. A query input named the same as one of the entity's fields.
 10. `(bind ...)` on a top-level form — binds need a row, so they only work on
     forms inside a list item.
+11. `(allow (signed-in))` — it's the bare word: `(allow signed-in)`.
+    Only `role` and `owner` take parens.
+12. Declaring your own `User` entity, or assigning an `(auto @user)` field
+    in an insert — both are automatic.
+13. Using `@user` or `(auto @user)` on an action that has `(allow anyone)` —
+    there's no user to refer to.
+14. Forgetting that with `(auth ...)` present everything defaults to
+    `(allow signed-in)` — public pages need `(allow anyone)` on their
+    queries explicitly.
 
 ## Style
 

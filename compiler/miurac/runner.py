@@ -14,7 +14,7 @@ import tempfile
 
 from . import expr as E
 from .emit_python import emit_python
-from .model import App, StepCheck, StepDo, StepFail
+from .model import App, StepCheck, StepDo, StepFail, StepUser
 
 
 class CaseResult:
@@ -80,11 +80,21 @@ def _step_args(step, env):
     return {name: _eval(value_expr, env, src) for name, value_expr, src in step.args}
 
 
+def _step_ctx(step, env):
+    return {"user": env[step.by]} if getattr(step, "by", "") else {"user": None}
+
+
 def _run_step(module, step, env, result: CaseResult, i: int):
-    if isinstance(step, StepDo):
+    if isinstance(step, StepUser):
+        user = module.auth_create_user(f"{step.name}@test.example", "password-for-tests", role=step.role)
+        env[step.name] = user
+    elif isinstance(step, StepDo):
         fn = getattr(module, f"action_{step.action}")
         try:
-            row = fn(_step_args(step, env))
+            row = fn(_step_args(step, env), _step_ctx(step, env))
+        except module.PermissionDenied as err:
+            result.failures.append(f"step {i}: (do {step.action} ...) was denied: {err}")
+            return
         except module.ContractViolation as err:
             result.failures.append(f"step {i}: (do {step.action} ...) was rejected by a contract: {err}")
             return
@@ -100,20 +110,21 @@ def _run_step(module, step, env, result: CaseResult, i: int):
     elif isinstance(step, StepFail):
         fn = getattr(module, f"action_{step.action}")
         try:
-            fn(_step_args(step, env))
-        except module.ContractViolation:
+            fn(_step_args(step, env), _step_ctx(step, env))
+        except (module.ContractViolation, module.PermissionDenied):
             return  # expected
         except module.EnsuresViolation as err:
             result.failures.append(f"step {i}: (fail {step.action} ...) hit an ensures violation instead of a requires rejection: {err}")
             return
-        result.failures.append(f"step {i}: (fail {step.action} ...) expected a contract rejection but the action succeeded")
+        result.failures.append(f"step {i}: (fail {step.action} ...) expected a contract or permission rejection but the action succeeded")
     elif isinstance(step, StepCheck):
         fn = getattr(module, f"query_{step.query}")
-        if step.args:
-            qargs = {name: _eval(value_expr, env, src) for name, value_expr, src in step.args}
-            rows = fn(qargs)
-        else:
-            rows = fn()
+        qargs = {name: _eval(value_expr, env, src) for name, value_expr, src in step.args}
+        try:
+            rows = fn(qargs, _step_ctx(step, env))
+        except module.PermissionDenied as err:
+            result.failures.append(f"step {i}: (check {step.query} ...) was denied: {err}")
+            return
         check_env = dict(env, result=rows)
         for part in step.parts:
             if part[0] == "expect":

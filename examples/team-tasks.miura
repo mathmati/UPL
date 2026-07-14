@@ -1,0 +1,101 @@
+; Miura bundle — a team task board exercising the v0.4 auth dialect:
+; roles, ownership, (allow ...) rules, @user scoping, and (unique).
+(miura 0.1
+  (intent "A team task board. Members sign up and create tasks they own; a task has a unique slug, a title, and a done flag. Members may toggle or delete only their own tasks; admins may delete anyone's. Everyone signed in sees all tasks newest first, plus a 'My tasks' view scoped to themselves. Anonymous visitors can see nothing and do nothing.")
+  (auth
+    (roles admin member)
+    (default-role member)
+    (first-user-role admin))
+  (schema
+    (entity Task
+      (field id (id) (auto))
+      (field owner (ref User) (auto @user))
+      (field slug (text) (unique) (require (and (>= (len slug) 3) (<= (len slug) 40))))
+      (field title (text) (require (and (>= (len title) 1) (<= (len title) 120))))
+      (field done (bool) (default false))
+      (field created_at (timestamp) (auto))))
+  (workflow
+    (action create_task
+      (allow signed-in)
+      (input (slug text) (title text))
+      (requires (>= (len title) 1))
+      (effect (insert Task (slug slug) (title title)))
+      (ensures (= (. result owner) @user))
+      (ensures (= (. result done) false)))
+    (action toggle_task
+      (allow (owner owner))
+      (input (id id))
+      (effect (update Task id (done (not (. current done)))))
+      (ensures (!= (. result done) (. current done))))
+    (action delete_task
+      (allow (owner owner))
+      (allow (role admin))
+      (input (id id))
+      (effect (delete Task id)))
+    (query all_tasks
+      (allow signed-in)
+      (from Task)
+      (order-by created_at desc))
+    (query my_tasks
+      (allow signed-in)
+      (from Task)
+      (where (= owner @user))
+      (order-by created_at desc)))
+  (ui
+    (page home "/"
+      (heading "Team tasks")
+      (form
+        (action create_task)
+        (field slug (label "Slug (unique, 3-40 chars)"))
+        (field title (label "Title")))
+      (heading "All tasks")
+      (list
+        (query all_tasks)
+        (item
+          (checkbox (bind done) (action toggle_task (id id)))
+          (text title)
+          (button (label "Delete") (action delete_task (id id)))))
+      (heading "My tasks")
+      (list
+        (query my_tasks)
+        (item
+          (checkbox (bind done) (action toggle_task (id id)))
+          (text title)))))
+  (tests
+    (case ownership_is_enforced
+      (user alice member)
+      (user bob member)
+      (do create_task (slug "ship-v04") (title "Ship v0.4") (by alice) (as t)
+        (expect (= (. result owner) (. alice id))))
+      (fail toggle_task (id (. t id)) (by bob))
+      (fail delete_task (id (. t id)) (by bob))
+      (do toggle_task (id (. t id)) (by alice) (expect (= (. result done) true))))
+    (case admins_can_delete_but_not_toggle_others
+      (user root admin)
+      (user carol member)
+      (do create_task (slug "carols-task") (title "Carol's task") (by carol) (as t))
+      (fail toggle_task (id (. t id)) (by root))
+      (do delete_task (id (. t id)) (by root))
+      (check all_tasks (by root) (expect (= (len result) 0))))
+    (case anonymous_is_locked_out
+      (user dana member)
+      (do create_task (slug "visible") (title "Visible") (by dana))
+      (fail create_task (slug "sneaky") (title "Sneaky"))
+      (check all_tasks (by dana) (expect (= (len result) 1))))
+    (case my_tasks_is_scoped
+      (user erin member)
+      (user finn member)
+      (do create_task (slug "erins-1") (title "Erin one") (by erin))
+      (do create_task (slug "erins-2") (title "Erin two") (by erin))
+      (do create_task (slug "finns-1") (title "Finn one") (by finn))
+      (check my_tasks (by erin) (expect (= (len result) 2)))
+      (check my_tasks (by finn)
+        (expect (= (len result) 1))
+        (row 0 (as only))
+        (expect (= (. only title) "Finn one")))
+      (check all_tasks (by erin) (expect (= (len result) 3))))
+    (case slugs_are_unique
+      (user gene member)
+      (do create_task (slug "one-slug") (title "First") (by gene))
+      (fail create_task (slug "one-slug") (title "Second") (by gene))
+      (fail create_task (slug "ab") (title "Too short slug") (by gene)))))
