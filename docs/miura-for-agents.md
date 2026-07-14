@@ -159,7 +159,8 @@ Rules:
   effect's pre-image, for update/delete). With multiple effects, prefer the
   explicit bindings — they're unambiguous.
 - Insert must assign every field that is not `(auto)` and has no `(default)`.
-  Never assign `(auto)` fields.
+  You *may* also assign a field that has a `(default)` (to override it);
+  you just don't have to. Never assign `(auto)` fields.
 - Expression contexts: `requires` sees inputs — and, for a **single-effect
   update or delete action**, also `current` (the row before the change).
   Insert exprs see inputs. Update exprs see inputs + `current`. `ensures`
@@ -181,6 +182,15 @@ Rules:
   A rejected transition returns 400. This is how you express "can't close a
   closed ticket", "can't play an occupied cell", "must be X's turn", etc.
   Test them with `(fail action ...)` on an illegal transition.
+  - You can combine several `(requires ...)` clauses on one action, mixing
+    `current`-based and input-based ones — all must hold.
+  - There is no if/else or ternary, and enums can't be inputs, so there is
+    **no generic way to "flip" a two-valued enum** inside one action. To
+    alternate a field between two enum values, **define one action per
+    resulting value** rather than trying to compute the flip. E.g. instead
+    of one `toggle_turn`, write `set_turn_x` and `set_turn_o`, each guarded
+    by `(requires (= (. current turn) ...))`. (This is more verbose but
+    makes each transition an explicit, separately-testable contract.)
 - `(. row field)` reads a field from a bound row: `(. current done)`,
   `(. result title)`. Bare names are inputs (or, in `where`/field `require`,
   the row's own fields).

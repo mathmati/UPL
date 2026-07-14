@@ -116,3 +116,36 @@ explicit same-step-binding rule in the guide, a query-scoped `@user`
 example, and one small language addition — `(fail query)` steps, so
 "anonymous can see nothing" is directly assertable (adopted into
 `examples/bookclub.miura`).
+
+---
+
+## Addendum: the v0.8 state-machine dialect — tic-tac-toe (same day)
+
+The canonical "inexpressible" app of this whole project — for months the
+stock example of what Miura *couldn't* do, because `requires` could not
+read current state — became the authoring test for the enum +
+state-dependent-`requires` dialect. A Sonnet agent, guide-only, was asked
+to build tic-tac-toe: a Game with nine `(enum empty x o)` cells, a turn
+tracker, and move-legality enforced as contracts (only an empty cell, only
+on your turn, only while the game is not over).
+
+**Result: first-try pass, zero repairs.** 21 actions, 4/4 test cases
+(legal alternating play, occupied-cell rejection, out-of-turn rejection,
+play-after-resign rejection). Adopted as `examples/tictactoe.miura`.
+
+The agent surfaced one real modeling wrinkle and two doc gaps, all folded
+into the guide:
+- **No generic enum "flip."** With no if/else and enums barred as inputs,
+  there's no way to compute "the other value" in one action; the agent
+  correctly split each cell into `play_N_x`/`play_N_o` (one action per
+  resulting turn). Guide now states the "one action per resulting value"
+  pattern explicitly. (Verbose — 18 play actions — but each transition is a
+  separately-testable contract, which is on-brand.)
+- Guide now confirms an insert *may* assign a field that has a `(default)`,
+  and that multiple `(requires ...)` clauses (mixing `current`- and
+  input-based) combine.
+
+The read-out: the app that defined the language's limit is now authorable
+first-try from the spec alone — the clearest single demonstration that the
+grow-from-failure-reports loop has closed a real gap into a learnable
+primitive.

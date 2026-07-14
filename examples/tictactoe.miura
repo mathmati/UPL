@@ -1,0 +1,281 @@
+(miura 0.1
+  (intent "A single shared tic-tac-toe board for two players taking turns on one screen: start a fresh game, play cells in turn order, or resign.")
+
+  (schema
+    (entity Game
+      (field id (id) (auto))
+      (field cell_0 (enum empty x o) (default empty))
+      (field cell_1 (enum empty x o) (default empty))
+      (field cell_2 (enum empty x o) (default empty))
+      (field cell_3 (enum empty x o) (default empty))
+      (field cell_4 (enum empty x o) (default empty))
+      (field cell_5 (enum empty x o) (default empty))
+      (field cell_6 (enum empty x o) (default empty))
+      (field cell_7 (enum empty x o) (default empty))
+      (field cell_8 (enum empty x o) (default empty))
+      (field turn (enum x o) (default x))
+      (field winner (enum none x o draw) (default none))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action new_game
+      (effect (insert Game
+        (cell_0 "empty") (cell_1 "empty") (cell_2 "empty")
+        (cell_3 "empty") (cell_4 "empty") (cell_5 "empty")
+        (cell_6 "empty") (cell_7 "empty") (cell_8 "empty")
+        (turn "x") (winner "none")))
+      (ensures (= (. result turn) "x"))
+      (ensures (= (. result winner) "none")))
+
+    (action play_0_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_0) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_0 "x") (turn "o")))
+      (ensures (= (. result cell_0) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_0_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_0) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_0 "o") (turn "x")))
+      (ensures (= (. result cell_0) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action play_1_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_1) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_1 "x") (turn "o")))
+      (ensures (= (. result cell_1) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_1_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_1) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_1 "o") (turn "x")))
+      (ensures (= (. result cell_1) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action play_2_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_2) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_2 "x") (turn "o")))
+      (ensures (= (. result cell_2) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_2_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_2) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_2 "o") (turn "x")))
+      (ensures (= (. result cell_2) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action play_3_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_3) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_3 "x") (turn "o")))
+      (ensures (= (. result cell_3) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_3_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_3) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_3 "o") (turn "x")))
+      (ensures (= (. result cell_3) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action play_4_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_4) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_4 "x") (turn "o")))
+      (ensures (= (. result cell_4) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_4_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_4) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_4 "o") (turn "x")))
+      (ensures (= (. result cell_4) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action play_5_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_5) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_5 "x") (turn "o")))
+      (ensures (= (. result cell_5) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_5_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_5) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_5 "o") (turn "x")))
+      (ensures (= (. result cell_5) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action play_6_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_6) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_6 "x") (turn "o")))
+      (ensures (= (. result cell_6) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_6_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_6) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_6 "o") (turn "x")))
+      (ensures (= (. result cell_6) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action play_7_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_7) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_7 "x") (turn "o")))
+      (ensures (= (. result cell_7) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_7_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_7) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_7 "o") (turn "x")))
+      (ensures (= (. result cell_7) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action play_8_x
+      (input (id id))
+      (requires (= (. current turn) "x"))
+      (requires (= (. current cell_8) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_8 "x") (turn "o")))
+      (ensures (= (. result cell_8) "x"))
+      (ensures (= (. result turn) "o")))
+
+    (action play_8_o
+      (input (id id))
+      (requires (= (. current turn) "o"))
+      (requires (= (. current cell_8) "empty"))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (cell_8 "o") (turn "x")))
+      (ensures (= (. result cell_8) "o"))
+      (ensures (= (. result turn) "x")))
+
+    (action resign_x
+      (input (id id))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (winner "o")))
+      (ensures (= (. result winner) "o")))
+
+    (action resign_o
+      (input (id id))
+      (requires (= (. current winner) "none"))
+      (effect (update Game id (winner "x")))
+      (ensures (= (. result winner) "x")))
+
+    (query list_games
+      (from Game)
+      (order-by created_at desc)))
+
+  (ui
+    (page home "/"
+      (heading "Tic-Tac-Toe")
+      (form
+        (action new_game))
+      (list
+        (query list_games)
+        (item
+          (heading "Game")
+          (text turn)
+          (text winner)
+          (text cell_0)
+          (button (label "0: X") (action play_0_x (id id)))
+          (button (label "0: O") (action play_0_o (id id)))
+          (text cell_1)
+          (button (label "1: X") (action play_1_x (id id)))
+          (button (label "1: O") (action play_1_o (id id)))
+          (text cell_2)
+          (button (label "2: X") (action play_2_x (id id)))
+          (button (label "2: O") (action play_2_o (id id)))
+          (text cell_3)
+          (button (label "3: X") (action play_3_x (id id)))
+          (button (label "3: O") (action play_3_o (id id)))
+          (text cell_4)
+          (button (label "4: X") (action play_4_x (id id)))
+          (button (label "4: O") (action play_4_o (id id)))
+          (text cell_5)
+          (button (label "5: X") (action play_5_x (id id)))
+          (button (label "5: O") (action play_5_o (id id)))
+          (text cell_6)
+          (button (label "6: X") (action play_6_x (id id)))
+          (button (label "6: O") (action play_6_o (id id)))
+          (text cell_7)
+          (button (label "7: X") (action play_7_x (id id)))
+          (button (label "7: O") (action play_7_o (id id)))
+          (text cell_8)
+          (button (label "8: X") (action play_8_x (id id)))
+          (button (label "8: O") (action play_8_o (id id)))
+          (button (label "Resign X") (action resign_x (id id)))
+          (button (label "Resign O") (action resign_o (id id)))))))
+
+  (tests
+    (case moves_alternate
+      (do new_game (as g)
+        (expect (= (. result turn) "x"))
+        (expect (= (. result winner) "none"))
+        (expect (= (. result cell_0) "empty")))
+      (do play_0_x (id (. g id))
+        (expect (= (. result cell_0) "x"))
+        (expect (= (. result turn) "o")))
+      (do play_1_o (id (. g id))
+        (expect (= (. result cell_1) "o"))
+        (expect (= (. result turn) "x")))
+      (do play_2_x (id (. g id))
+        (expect (= (. result cell_2) "x"))
+        (expect (= (. result turn) "o")))
+      (check list_games (expect (= (len result) 1))))
+
+    (case rejects_occupied_cell
+      (do new_game (as g))
+      (do play_0_x (id (. g id)))
+      (fail play_0_o (id (. g id))))
+
+    (case rejects_out_of_turn
+      (do new_game (as g))
+      (do play_0_x (id (. g id)))
+      (fail play_1_x (id (. g id))))
+
+    (case rejects_move_after_resign
+      (do new_game (as g))
+      (do resign_x (id (. g id))
+        (expect (= (. result winner) "o")))
+      (fail play_0_x (id (. g id)))
+      (fail play_0_o (id (. g id))))))
