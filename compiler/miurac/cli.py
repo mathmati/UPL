@@ -13,6 +13,7 @@ import sys
 from .emit_python import emit_python
 from .emit_sql import emit_sql
 from .emit_web import emit_web
+from .migrate import plan as migration_plan
 from .model import BundleError, load
 from .runner import run_tests
 from .sexpr import ParseError, dumps, parse
@@ -114,6 +115,58 @@ def cmd_verify(args) -> int:
     return 0 if clean else 1
 
 
+def cmd_migrate(args) -> int:
+    old_app = _load_file(args.old)
+    new_app = _load_file(args.new)
+    plan = migration_plan(old_app, new_app)
+    blocked = [s for s in plan.steps if s.severity == "blocked"]
+    destructive = [s for s in plan.steps if s.severity == "destructive"]
+    emittable = [s for s in plan.steps if s.emittable]
+    will_run = emittable if args.allow_destructive else [s for s in emittable if s.severity != "destructive"]
+
+    if args.json:
+        print(json.dumps({
+            "ok": not blocked and (args.allow_destructive or not destructive),
+            "from_sha256": old_app.bundle_hash,
+            "to_sha256": new_app.bundle_hash,
+            "steps": [{"severity": s.severity, "summary": s.summary, "sql": s.sql} for s in plan.steps],
+        }))
+    else:
+        if not plan.steps:
+            print("no schema changes")
+        for s in plan.steps:
+            marker = {"safe": "  ", "verify": "? ", "destructive": "! ", "blocked": "x "}[s.severity]
+            print(f"{marker}[{s.severity}] {s.summary}")
+        if blocked:
+            print(f"\n{len(blocked)} step(s) cannot be migrated automatically (see 'x' above); resolve by hand.", file=sys.stderr)
+        if destructive and not args.allow_destructive:
+            print("\ncontains destructive steps ('!'); re-run with --allow-destructive to include them.", file=sys.stderr)
+
+    if args.apply:
+        if blocked:
+            print("error: refusing to apply — plan has blocked steps", file=sys.stderr)
+            return 1
+        if destructive and not args.allow_destructive:
+            print("error: refusing to apply destructive steps without --allow-destructive", file=sys.stderr)
+            return 1
+        import sqlite3
+        conn = sqlite3.connect(args.apply)
+        try:
+            for s in will_run:
+                conn.executescript(s.sql)
+            conn.commit()
+        finally:
+            conn.close()
+        print(f"applied {len(will_run)} step(s) to {args.apply}")
+    elif not args.json:
+        sql = "\n".join(s.sql for s in will_run)
+        if sql.strip():
+            print("\n--- migration SQL ---")
+            print(sql)
+
+    return 1 if blocked or (destructive and not args.allow_destructive) else 0
+
+
 def cmd_unpack(args) -> int:
     app = _load_file(args.bundle)
     header = _header(app, args.bundle)
@@ -157,6 +210,14 @@ def main(argv=None) -> int:
     p_verify.add_argument("-o", "--out", default="build", help="build directory to verify (default: build)")
     p_verify.add_argument("--json", action="store_true", help="machine-readable output")
     p_verify.set_defaults(fn=cmd_verify)
+
+    p_migrate = sub.add_parser("migrate", help="diff two bundles into a deterministic schema migration plan")
+    p_migrate.add_argument("old", help="the currently-deployed bundle")
+    p_migrate.add_argument("new", help="the new bundle to migrate to")
+    p_migrate.add_argument("--apply", metavar="DB", help="apply the plan to this SQLite database")
+    p_migrate.add_argument("--allow-destructive", action="store_true", help="include data-losing steps (drops)")
+    p_migrate.add_argument("--json", action="store_true", help="machine-readable output")
+    p_migrate.set_defaults(fn=cmd_migrate)
 
     args = parser.parse_args(argv)
     try:

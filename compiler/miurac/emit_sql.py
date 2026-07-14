@@ -33,24 +33,30 @@ CREATE TABLE IF NOT EXISTS session (
 );"""
 
 
+def column_ddl(f) -> str:
+    """The column definition for a field, as it appears in CREATE TABLE."""
+    if f.type == "ref":
+        col = f"{f.name} TEXT NOT NULL REFERENCES {table_name(f.ref_entity)}(id)"
+    else:
+        col = f"{f.name} {_SQL_TYPES[f.type]} NOT NULL"
+        if f.type == "id":
+            col += " PRIMARY KEY"
+    if f.unique and f.type != "id":
+        col += " UNIQUE"
+    return col
+
+
+def table_ddl(entity, if_not_exists: bool = True) -> str:
+    ine = "IF NOT EXISTS " if if_not_exists else ""
+    cols = ",\n".join("    " + column_ddl(f) for f in entity.fields)
+    return f"CREATE TABLE {ine}{table_name(entity.name)} (\n{cols}\n);"
+
+
 def emit_sql(app: App, header: str) -> str:
     lines = [f"-- {line}" for line in header.splitlines()]
     if app.auth:
         lines.append(_AUTH_TABLES)
     for e in app.entities:
         lines.append("")
-        lines.append(f"CREATE TABLE IF NOT EXISTS {table_name(e.name)} (")
-        cols = []
-        for f in e.fields:
-            if f.type == "ref":
-                col = f"    {f.name} TEXT NOT NULL REFERENCES {table_name(f.ref_entity)}(id)"
-            else:
-                col = f"    {f.name} {_SQL_TYPES[f.type]} NOT NULL"
-                if f.type == "id":
-                    col += " PRIMARY KEY"
-            if f.unique and f.type != "id":
-                col += " UNIQUE"
-            cols.append(col)
-        lines.append(",\n".join(cols))
-        lines.append(");")
+        lines.append(table_ddl(e))
     return "\n".join(lines) + "\n"

@@ -55,7 +55,7 @@ capable LLM with a paragraph describing your app.
 | [`docs/miura-for-agents.md`](docs/miura-for-agents.md) | The authoring guide an LLM writes Miura from (spec-in-context) |
 | [`examples/`](examples/) | Nine app bundles — most written by AI agents that had never seen the language, incl. `ledger.miura` (atomic transfers) and `team-tasks.miura` (auth) |
 | [`experiments/`](experiments/) | Empirical results on AI authorship |
-| [`tests/`](tests/) | Compiler tests + end-to-end runtime tests (44) |
+| [`tests/`](tests/) | Compiler + runtime + migration tests (54) |
 | [`ROADMAP.md`](ROADMAP.md) · [`REVIEW-NOTES.md`](REVIEW-NOTES.md) | Path to v1; per-release review notes |
 | [`research/`](research/) | The research reports that scoped the design, plus novelty/value audits |
 

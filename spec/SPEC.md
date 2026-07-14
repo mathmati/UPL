@@ -252,6 +252,28 @@ Environment: `MIURA_PORT` (default 8000), `MIURA_DB` (default
 | `miurac test bundle [--json]` | run the bundle's `(tests ...)` cases against its unpacked app |
 | `miurac unpack bundle -o dir` | write server/web/db targets |
 | `miurac verify bundle -o dir [--json]` | drift detection: exit 1 if on-disk artifacts don't match what the bundle generates |
+| `miurac migrate old.miura new.miura [--apply DB] [--allow-destructive] [--json]` | diff two bundles into a deterministic schema migration plan |
+
+## Migrations
+
+`miurac migrate` diffs the schemas of two bundles and produces an
+**ordered, deterministic** migration plan (a pure function of the two
+schemas — no migration syntax lives in the language, keeping the bundle
+small). Each step has a severity:
+
+| Severity | Meaning | Example |
+|---|---|---|
+| `safe` | cannot lose data or fail on existing rows | new table; new column with a literal `(default)` |
+| `verify` | applies, but may fail against existing data the engine can't see | adding `(unique)`; adding a field that carries new invariants |
+| `destructive` | loses data | dropping a field or entity |
+| `blocked` | no safe deterministic step exists | adding a NOT NULL column with no `(default)`; changing a field's type |
+
+`migrate` prints the plan and the migration SQL. With `--apply DB` it runs
+the safe (and, with `--allow-destructive`, destructive) steps against a
+SQLite database in one transaction; safe steps are ordered before
+destructive ones, and the run refuses to start if the plan contains any
+`blocked` step or (absent the flag) any `destructive` step. Renames are
+not inferred from a diff — a rename appears as a drop plus an add.
 
 ## Not yet in the language (deliberately)
 
