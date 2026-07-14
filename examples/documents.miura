@@ -1,0 +1,38 @@
+; Miura bundle — a document lifecycle state machine (v0.8).
+; Demonstrates (enum ...) fields and state-dependent (requires (= (. current ...) ...)).
+(miura 0.1
+  (intent "A document with a draft/published/archived lifecycle. Only a draft can be published; only a published doc can be archived; archived is terminal.")
+  (schema (entity Doc
+    (field id (id) (auto))
+    (field title (text) (require (>= (len title) 1)))
+    (field status (enum draft published archived) (default draft))
+    (field created_at (timestamp) (auto))))
+  (workflow
+    (action create_doc (input (title text)) (effect (insert Doc (title title)))
+      (ensures (= (. result status) "draft")))
+    (action publish (input (id id))
+      (requires (= (. current status) "draft"))
+      (effect (update Doc id (status "published")))
+      (ensures (= (. result status) "published")))
+    (action archive (input (id id))
+      (requires (= (. current status) "published"))
+      (effect (update Doc id (status "archived"))))
+    (query all_docs (from Doc) (order-by created_at desc)))
+  (ui (page home "/" (heading "Docs")
+    (form (action create_doc) (field title (label "Title")))
+    (list (query all_docs) (item
+      (text title) (text status)
+      (button (label "Publish") (action publish (id id)))
+      (button (label "Archive") (action archive (id id)))))))
+  (tests
+    (case lifecycle
+      (do create_doc (title "spec") (as d) (expect (= (. result status) "draft")))
+      (do publish (id (. d id)) (expect (= (. result status) "published")))
+      (do archive (id (. d id))))
+    (case cannot_publish_twice
+      (do create_doc (title "x") (as d))
+      (do publish (id (. d id)))
+      (fail publish (id (. d id))))
+    (case cannot_archive_a_draft
+      (do create_doc (title "y") (as d))
+      (fail archive (id (. d id))))))

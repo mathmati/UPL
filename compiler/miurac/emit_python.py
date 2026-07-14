@@ -77,11 +77,15 @@ def _emit_owner_check(lines, owner_rules, allows, what, cur_var="current"):
 
 
 def _emit_field_requires(lines, entity, values_py: str, assigned=None):
-    """Emit field (require ...) checks against a dict-valued expression."""
+    """Emit field (require ...) and enum-membership checks against a
+    dict-valued expression."""
     for f in entity.fields:
-        if f.require is None:
-            continue
         if assigned is not None and f.name not in assigned:
+            continue
+        if f.type == "enum":
+            lines.append(f"    if {values_py}[{f.name!r}] not in {list(f.enum_values)!r}:")
+            lines.append(f"        raise ContractViolation('field {entity.name}.{f.name} must be one of {', '.join(f.enum_values)}')")
+        if f.require is None:
             continue
         cond = E.to_python(f.require, {f.name: f"{values_py}[{f.name!r}]"})
         lines.append(f"    if not {cond}:")
@@ -105,26 +109,43 @@ def _emit_action(app: App, action) -> list:
     # Permission checks run before any DB work (may raise PermissionDenied).
     owner_rules = _emit_allow_checks(lines, action.allows, action.name)
     single = len(action.effects) == 1
+    # A single-effect update/delete pre-fetches its row so that `requires`
+    # can read `current` (state-dependent guards).
+    prefetch = single and isinstance(action.effects[0], (Update, Delete))
 
     lines.append("    conn = _db()")
     lines.append("    _aggconn = conn")  # aggregates in requires/ensures see this txn
     lines.append("    try:")
 
-    # requires: preconditions over inputs; may read committed state via aggregates
+    names = dict(inames)
+    requires_names = dict(inames)
+    if prefetch:
+        eff0 = action.effects[0]
+        ent0 = app.entity(eff0.entity)
+        table0 = table_name(ent0.name)
+        lines.append(f"        _id0 = {E.to_python(eff0.id_expr, names, agg)}")
+        lines.append(f'        _cur0 = conn.execute("SELECT * FROM {table0} WHERE id = ?", (_id0,)).fetchone()')
+        lines.append("        if _cur0 is None:")
+        lines.append(f"            raise ContractViolation('no {ent0.name} with id ' + str(_id0))")
+        _emit_owner_check(lines, owner_rules, action.allows, action.name, "_cur0")
+        requires_names["current"] = "_cur0"
+
+    # requires: preconditions over inputs (and, for update/delete, `current`);
+    # may read committed state via aggregates
     for expr, src in action.requires:
-        cond = E.to_python(expr, inames, agg)
+        cond = E.to_python(expr, requires_names, agg)
         lines.append(f"        if not {cond}:")
         lines.append(f"            raise ContractViolation('requires failed: ' + {src!r})")
 
     # Effects run in order, no intermediate commit. Bindings from earlier
     # effects (as/was) are visible to later effects and to ensures.
-    names = dict(inames)
     last_result = None   # python expr for the row after the last insert/update
     last_current = None  # python expr for the pre-image of the last update/delete
 
     for i, eff in enumerate(action.effects):
         ent = app.entity(eff.entity)
         table = table_name(ent.name)
+        _pf = prefetch and i == 0  # this effect's current/id/owner already handled
         if isinstance(eff, Insert):
             assigns = dict((f, e) for f, e, _ in eff.assigns)
             row_items = []
@@ -156,12 +177,16 @@ def _emit_action(app: App, action) -> list:
                 names[eff.bind_as] = f"_res{i}"
             last_result, last_current = f"_res{i}", None
         elif isinstance(eff, Update):
-            id_py = E.to_python(eff.id_expr, names, agg)
-            lines.append(f'        _cur{i} = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
-            lines.append(f"        if _cur{i} is None:")
-            lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
-            if single:
-                _emit_owner_check(lines, owner_rules, action.allows, action.name, f"_cur{i}")
+            if _pf:
+                id_py = "_id0"
+                lines.append(f"        _cur{i} = _cur0")
+            else:
+                id_py = E.to_python(eff.id_expr, names, agg)
+                lines.append(f'        _cur{i} = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
+                lines.append(f"        if _cur{i} is None:")
+                lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
+                if single:
+                    _emit_owner_check(lines, owner_rules, action.allows, action.name, f"_cur{i}")
             unames = dict(names)
             unames["current"] = f"_cur{i}"
             assigned = set()
@@ -186,12 +211,16 @@ def _emit_action(app: App, action) -> list:
                 names[eff.bind_as] = f"_res{i}"
             last_result, last_current = f"_res{i}", f"_cur{i}"
         else:  # Delete
-            id_py = E.to_python(eff.id_expr, names, agg)
-            lines.append(f'        _cur{i} = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
-            lines.append(f"        if _cur{i} is None:")
-            lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
-            if single:
-                _emit_owner_check(lines, owner_rules, action.allows, action.name, f"_cur{i}")
+            if _pf:
+                id_py = "_id0"
+                lines.append(f"        _cur{i} = _cur0")
+            else:
+                id_py = E.to_python(eff.id_expr, names, agg)
+                lines.append(f'        _cur{i} = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
+                lines.append(f"        if _cur{i} is None:")
+                lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
+                if single:
+                    _emit_owner_check(lines, owner_rules, action.allows, action.name, f"_cur{i}")
             ref_children = [(child, f) for child in app.entities for f in child.fields if f.type == "ref" and f.ref_entity == ent.name]
             for child, f in ref_children:  # all restrict checks before any cascade deletes
                 if f.on_delete == "restrict":

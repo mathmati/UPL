@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .model import App
 
-_SQL_TYPES = {"id": "TEXT", "text": "TEXT", "int": "INTEGER", "bool": "INTEGER", "timestamp": "TEXT"}
+_SQL_TYPES = {"id": "TEXT", "text": "TEXT", "int": "INTEGER", "bool": "INTEGER", "timestamp": "TEXT", "enum": "TEXT"}
 
 
 def table_name(entity_name: str) -> str:
@@ -41,6 +41,9 @@ def column_ddl(f) -> str:
         col = f"{f.name} {_SQL_TYPES[f.type]} NOT NULL"
         if f.type == "id":
             col += " PRIMARY KEY"
+        if f.type == "enum":
+            allowed = ", ".join("'" + v.replace("'", "''") + "'" for v in f.enum_values)
+            col += f" CHECK ({f.name} IN ({allowed}))"
     if f.unique and f.type != "id":
         col += " UNIQUE"
     return col

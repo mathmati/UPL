@@ -97,6 +97,14 @@ Rules:
   type — text length checks and numeric bounds alike.
 - `(unique)`: no two rows may share this field's value (e.g. emails,
   slugs). A conflicting write is rejected with 400.
+- **Enums**: `(field status (enum draft published archived) (default draft))`
+  is a text field restricted to a fixed set of values. Writing any other
+  value is rejected (400), and a typo'd value in the bundle is a compile
+  error. In expressions and effects, refer to enum values as **string
+  literals**: `(update Doc id (status "published"))`,
+  `(= (. current status) "draft")`. The `(default ...)` is written as a bare
+  value. Enums cannot be action inputs — model each transition as its own
+  guarded action (see state machines below), which is the safer pattern.
 - **Relations**: `(field post (ref Post))` stores the id of an existing `Post`
   row. Writes that point at a missing row are rejected (contract violation).
   Deleting a referenced row is rejected by default; add `(on-delete cascade)`
@@ -152,9 +160,27 @@ Rules:
   explicit bindings — they're unambiguous.
 - Insert must assign every field that is not `(auto)` and has no `(default)`.
   Never assign `(auto)` fields.
-- Expression contexts: `requires` sees inputs. Insert exprs see inputs.
-  Update exprs see inputs + `current` (the row before the update).
-  `ensures` sees inputs + `result` (row after) + `current` (update/delete only).
+- Expression contexts: `requires` sees inputs — and, for a **single-effect
+  update or delete action**, also `current` (the row before the change).
+  Insert exprs see inputs. Update exprs see inputs + `current`. `ensures`
+  sees inputs + `result` (row after) + `current` (update/delete only).
+- **State machines / guarded transitions**: because an update/delete
+  `requires` can read `current`, you gate a transition on the current
+  state. Model each transition as its own action:
+
+  ```
+  (field status (enum draft published archived) (default draft))
+  (action publish (input (id id))
+    (requires (= (. current status) "draft"))     ; only a draft can be published
+    (effect (update Doc id (status "published"))))
+  (action archive (input (id id))
+    (requires (= (. current status) "published"))  ; only a published doc can be archived
+    (effect (update Doc id (status "archived"))))
+  ```
+
+  A rejected transition returns 400. This is how you express "can't close a
+  closed ticket", "can't play an occupied cell", "must be X's turn", etc.
+  Test them with `(fail action ...)` on an illegal transition.
 - `(. row field)` reads a field from a bound row: `(. current done)`,
   `(. result title)`. Bare names are inputs (or, in `where`/field `require`,
   the row's own fields).

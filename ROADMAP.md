@@ -66,9 +66,12 @@ the target tier.
   failure-mode research reports ([research/failure-modes-security.md](research/failure-modes-security.md),
   [research/failure-modes-correctness.md](research/failure-modes-correctness.md)).
   Prioritized, evidence-backed:
-  1. **Enums + state-dependent `requires`** (roadmap 5a) — illegal-transition
-     bugs are a top workflow-correctness class; the most-requested primitive
-     (tic-tac-toe is inexpressible today because `requires` can't read state).
+  1. **Enums + state-dependent `requires`** (roadmap 5a) ✓ **shipped** —
+     `(enum ...)` fields (runtime-enforced + compile-time typo-checked) and
+     `requires` reading `current` on single-effect update/delete actions.
+     Guarded transitions now express illegal-transition rejection, turn
+     order, close-a-closed-ticket ([examples/documents.miura](examples/documents.miura)).
+     This closes the "tic-tac-toe is inexpressible" gap.
   2. **Keyset pagination + SQL predicate/LIMIT push-down** — the query engine
      currently fetches whole tables into Python and filters there (the
      "works at 50 rows, dies at 50k" cliff). Upgrade under the existing

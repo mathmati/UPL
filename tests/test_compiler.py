@@ -324,6 +324,91 @@ class TestV07(unittest.TestCase):
             self.assertNotEqual([r["id"] for r in page0], [r["id"] for r in page1])
 
 
+class TestV08StateMachine(unittest.TestCase):
+    SM = """(miura 0.1
+  (intent "doc lifecycle")
+  (schema (entity Doc
+    (field id (id) (auto))
+    (field title (text) (require (>= (len title) 1)))
+    (field status (enum draft published archived) (default draft))
+    (field created_at (timestamp) (auto))))
+  (workflow
+    (action create_doc (input (title text)) (effect (insert Doc (title title)))
+      (ensures (= (. result status) "draft")))
+    (action publish (input (id id))
+      (requires (= (. current status) "draft"))
+      (effect (update Doc id (status "published"))))
+    (action archive (input (id id))
+      (requires (= (. current status) "published"))
+      (effect (update Doc id (status "archived"))))
+    (query all_docs (from Doc) (order-by created_at desc)))
+  (ui (page home "/" (heading "Docs")
+    (form (action create_doc) (field title (label "Title")))
+    (list (query all_docs) (item (text title) (text status)
+      (button (label "Publish") (action publish (id id))))))))
+"""
+
+    def load_sm(self, **repl):
+        text = self.SM
+        for a, b in repl.items():
+            text = text.replace(a.replace("__", " "), b)
+        return load(text)
+
+    def assert_error(self, repl, fragment):
+        with self.assertRaises(BundleError) as ctx:
+            self.load_sm(**repl)
+        self.assertIn(fragment, str(ctx.exception))
+
+    def test_enum_field_loads(self):
+        app = self.load_sm()
+        f = next(f for f in app.entity("Doc").fields if f.name == "status")
+        self.assertEqual(f.type, "enum")
+        self.assertEqual(f.enum_values, ("draft", "published", "archived"))
+        self.assertEqual(f.default, "draft")
+
+    def test_enum_default_typo_rejected(self):
+        self.assert_error({"(default draft)": "(default drft)"}, "not one of the enum values")
+
+    def test_enum_effect_literal_typo_rejected(self):
+        self.assert_error({'(status "published")': '(status "publishd")'}, "not a valid status value")
+
+    def test_current_in_insert_requires_rejected(self):
+        bad = self.SM.replace(
+            "(action create_doc (input (title text)) (effect (insert Doc (title title)))",
+            "(action create_doc (input (title text)) (requires (= (. current status) \"draft\")) (effect (insert Doc (title title)))")
+        with self.assertRaises(BundleError) as ctx:
+            load(bad)
+        self.assertIn("only available to a single-effect update/delete", str(ctx.exception))
+
+    def test_requires_unknown_current_field_rejected(self):
+        self.assert_error({'(requires (= (. current status) "draft"))': '(requires (= (. current ghost) "draft"))'},
+                          "unknown field (. current ghost)")
+
+    def _run(self, app):
+        from miurac.runner import run_tests
+        return run_tests(app)
+
+    def test_guarded_transitions_at_runtime(self):
+        tests = """  (tests
+    (case ok
+      (do create_doc (title "a") (as d) (expect (= (. result status) "draft")))
+      (do publish (id (. d id)) (expect (= (. result status) "published")))
+      (do archive (id (. d id))))
+    (case no_double_publish
+      (do create_doc (title "b") (as d))
+      (do publish (id (. d id)))
+      (fail publish (id (. d id))))
+    (case no_archive_draft
+      (do create_doc (title "c") (as d))
+      (fail archive (id (. d id)))))
+"""
+        # insert the tests section just before the final ) that closes (miura ...)
+        bundle = self.SM.rstrip()[:-1] + "\n" + tests + ")\n"
+        results = self._run(load(bundle))
+        self.assertTrue(all(r.ok for r in results), [(r.name, r.failures) for r in results])
+        self.assertEqual({r.name for r in results}, {"ok", "no_double_publish", "no_archive_draft"})
+
+
 class TestUnpack(unittest.TestCase):
     def unpack(self, out_dir):
         env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "compiler"))

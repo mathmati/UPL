@@ -49,8 +49,11 @@ it in practice).
   (field name (type) option...))
 ```
 
-Types: `id`, `text`, `int`, `bool`, `timestamp`, and `(ref Entity)`
-(a reference to another entity's row by id).
+Types: `id`, `text`, `int`, `bool`, `timestamp`, `(ref Entity)`
+(a reference to another entity's row by id), and `(enum v1 v2 ...)`
+(a text field restricted to a fixed value set; stored TEXT with a CHECK
+constraint, enforced at runtime with 400, and typo-checked at compile
+time where values appear as literals).
 
 Field options:
 
@@ -137,6 +140,14 @@ update/delete only), and is checked *before* commit. An action returns
 `result` as JSON (`{"ok": true}` when the last effect is a delete).
 
 `(allow (owner field))` is restricted to single-effect actions.
+
+**State-dependent `requires`.** For a **single-effect update or delete
+action**, `requires` may also read `current` (the pre-image, fetched
+before the check). This gates a transition on the current state —
+`(requires (= (. current status) "draft"))` — the primitive for legal
+state-machine transitions (illegal-transition rejection, turn order,
+close-a-closed-ticket). Insert actions and multi-effect actions keep
+`requires` over inputs only.
 
 **Queries** read exactly one entity:
 

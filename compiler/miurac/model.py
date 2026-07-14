@@ -33,8 +33,9 @@ class BundleError(Exception):
 @dataclass
 class Field:
     name: str
-    type: str  # one of TYPES, or "ref"
+    type: str  # one of TYPES, "ref", or "enum"
     ref_entity: str = ""  # set when type == "ref"
+    enum_values: tuple = ()  # set when type == "enum": the allowed string values
     on_delete: str = "restrict"  # ref fields: restrict | cascade
     auto: bool = False
     auto_user: bool = False  # (auto @user): ref User field filled from the session
@@ -337,13 +338,18 @@ def _load_entity(node) -> Entity:
         _expect(len(f) >= 3, path, f"field needs a name and a (type): {dumps(f)}")
         fname = _sym(f[1], path, "field name")
         fpath = f"{path}.{fname}"
-        _expect(isinstance(f[2], list) and len(f[2]) in (1, 2), fpath, f"field type must be (type) or (ref Entity), got {dumps(f[2])}")
+        _expect(isinstance(f[2], list) and len(f[2]) >= 1, fpath, f"field type must be (type), (ref Entity), or (enum v...), got {dumps(f[2])}")
         ftype = _sym(f[2][0], fpath, "field type")
-        if len(f[2]) == 2:
-            _expect(ftype == "ref", fpath, f"two-part field type must be (ref Entity), got {dumps(f[2])}")
+        if ftype == "ref":
+            _expect(len(f[2]) == 2, fpath, f"ref type must be (ref Entity), got {dumps(f[2])}")
             fld = Field(name=fname, type="ref", ref_entity=_sym(f[2][1], fpath, "ref entity"))
+        elif ftype == "enum":
+            _expect(len(f[2]) >= 2, fpath, "(enum ...) needs at least one value")
+            values = [_sym(v, fpath, "enum value") for v in f[2][1:]]
+            _expect(len(values) == len(set(values)), fpath, "duplicate enum value")
+            fld = Field(name=fname, type="enum", enum_values=tuple(values))
         else:
-            _expect(ftype in TYPES, fpath, f"unknown type '{ftype}' (allowed: {', '.join(TYPES)}, ref)")
+            _expect(len(f[2]) == 1 and ftype in TYPES, fpath, f"unknown type '{ftype}' (allowed: {', '.join(TYPES)}, ref, enum)")
             fld = Field(name=fname, type=ftype)
         for opt in f[3:]:
             _expect(isinstance(opt, list) and opt and isinstance(opt[0], Sym), fpath, f"bad field option {dumps(opt)}")
@@ -367,8 +373,14 @@ def _load_entity(node) -> Entity:
                     fld.auto = True
             elif key == "default":
                 _expect(len(opt) == 2, fpath, "(default value) takes one literal")
-                _expect(not isinstance(opt[1], (list, Sym)), fpath, "default must be a literal")
-                fld.default = opt[1]
+                if fld.type == "enum":
+                    # enum default is written as a bare value symbol, stored as its string
+                    _expect(isinstance(opt[1], Sym), fpath, "enum default is one of the enum values")
+                    _expect(str(opt[1]) in fld.enum_values, fpath, f"default '{opt[1]}' is not one of the enum values: {', '.join(fld.enum_values)}")
+                    fld.default = str(opt[1])
+                else:
+                    _expect(not isinstance(opt[1], (list, Sym)), fpath, "default must be a literal")
+                    fld.default = opt[1]
                 fld.has_default = True
             elif key == "require":
                 _expect(len(opt) == 2, fpath, "(require expr) takes one expression")
@@ -799,10 +811,24 @@ def _validate(app: App):
         auth_names = {"@user"} if app.auth and _signed_in_guaranteed(a.allows) else set()
         inames = inames | auth_names
 
+        # A single-effect update/delete action's `requires` may read `current`
+        # (the pre-image row) — this is the state-dependent-guard primitive
+        # for legal transitions (only-a-draft-can-publish, turn order, etc.).
+        requires_scope = inames
+        requires_current_ent = None
+        if len(a.effects) == 1 and isinstance(primary, (Update, Delete)):
+            requires_scope = inames | {"current"}
+            requires_current_ent = primary_ent
         for expr, src in a.requires:
-            bad = E.free_names(expr) - inames
-            _expect(not bad, apath, f"requires references unbound names: {', '.join(sorted(bad))} in {src}")
-            _check_aggregates(app, expr, inames, apath, src, allowed=True)
+            bad = E.free_names(expr) - requires_scope
+            _expect(not bad, apath, f"requires references unbound names: {', '.join(sorted(bad))} in {src}"
+                    + (" ('current' is only available to a single-effect update/delete action)" if "current" in bad else ""))
+            _check_aggregates(app, expr, requires_scope, apath, src, allowed=True)
+            if requires_current_ent is not None:
+                cfields = {f.name for f in requires_current_ent.fields}
+                for base, fname in E.field_refs(expr):
+                    if base == "current":
+                        _expect(fname in cfields, apath, f"requires references unknown field (. current {fname})")
 
         bound_names = set()
         row_entities = {}  # binding name -> entity (for field-ref checks)
@@ -822,6 +848,9 @@ def _validate(app: App):
                     bad = E.free_names(expr) - allowed_names
                     _expect(not bad, apath, f"effect expr references unbound names: {', '.join(sorted(bad))} in {src}")
                     _check_aggregates(app, expr, allowed_names, apath, src, allowed=False)
+                    fld = fields[fname]
+                    if fld.type == "enum" and isinstance(expr, E.Lit) and isinstance(expr.value, str):
+                        _expect(expr.value in fld.enum_values, apath, f"'{expr.value}' is not a valid {fname} value (allowed: {', '.join(fld.enum_values)})")
                 return assigned
 
             if isinstance(eff, Insert):
