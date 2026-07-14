@@ -1,0 +1,32 @@
+{
+  "date": "2026-07-14",
+  "tier": "auth + permissions + live-data migration",
+  "model_both_arms": "claude-sonnet",
+  "oracle": "hidden; 22 checks per task (18 permission-matrix + data-correctness, 4 migration data-preservation), written after agents launched, cookie-aware multi-session HTTP, name-agnostic; graded both arms identically",
+  "fairness_note": "The direct arm's prompt named the exact failure modes to avoid (password hashing, sessions-survive-restart, ownership-403, migration-must-preserve-data). That is the security checklist Miura bakes in for free; handing it to the direct arm makes this a capability comparison, and BIASES TOWARD CORRECTNESS PARITY. See writeup.",
+  "tasks": {
+    "snippets": {"oracle_checks": 22,
+      "miura":  {"oracle_passed": 22, "tokens": 50378, "tool_uses": 21, "repair_rounds": 2, "bundle_v1_loc": 152, "generated_loc": 908},
+      "direct": {"oracle_passed": 22, "tokens": 76874, "tool_uses": 47, "repair_rounds": 0, "app_v1_loc": 653, "migrate_loc": 83}},
+    "expenses": {"oracle_checks": 22,
+      "miura":  {"oracle_passed": 22, "tokens": 49250, "tool_uses": 17, "repair_rounds": 0, "bundle_v1_loc": 150, "generated_loc": 876},
+      "direct": {"oracle_passed": 22, "tokens": 69593, "tool_uses": 39, "repair_rounds": 1, "app_v1_loc": 544, "migrate_loc": 50}},
+    "bookings": {"oracle_checks": 22,
+      "miura":  {"oracle_passed": 22, "tokens": 49460, "tool_uses": 12, "repair_rounds": 0, "bundle_v1_loc": 127, "generated_loc": 875},
+      "direct": {"oracle_passed": 22, "tokens": 64152, "tool_uses": 47, "repair_rounds": 2, "app_v1_loc": 563, "migrate_loc": 84}},
+    "docs": {"oracle_checks": 22,
+      "miura":  {"oracle_passed": 22, "tokens": 48259, "tool_uses": 10, "repair_rounds": 0, "bundle_v1_loc": 133, "generated_loc": 873},
+      "direct": {"oracle_passed": 22, "tokens": 79772, "tool_uses": 35, "repair_rounds": 0, "app_v1_loc": 513, "migrate_loc": 78}}
+  },
+  "totals": {
+    "oracle": {"miura": "88/88", "direct": "88/88"},
+    "tokens": {"miura": 197347, "direct": 290391, "ratio_direct_over_miura": 1.47},
+    "tool_uses": {"miura": 60, "direct": 168, "ratio": 2.80},
+    "human_review_loc": {
+      "miura_bundles_incl_tests": 562,
+      "direct_code_excl_tests": 2568,
+      "ratio": 4.57,
+      "note": "Miura's 562 lines INCLUDE the acceptance tests; the direct arm's 2568 lines (app v1 + migrate scripts) include NO tests. Miura migration adds 0 reviewable lines (miurac migrate). Generated Miura code (3532 lines) is not reviewed."
+    }
+  }
+}

@@ -1,0 +1,133 @@
+(miura 0.1
+  (intent "A shared document index where any signed-in user can create documents identified by a unique slug, owners can rename their own documents, and owners or editors can rename or delete any document.")
+
+  (auth
+    (roles editor author)
+    (default-role author)
+    (first-user-role editor))
+
+  (schema
+    (entity Doc
+      (field id (id) (auto))
+      (field slug (text) (unique) (require (and (>= (len slug) 3) (<= (len slug) 50))))
+      (field title (text) (require (and (>= (len title) 1) (<= (len title) 150))))
+      (field owner (ref User) (auto @user))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action create_doc
+      (input (slug text) (title text))
+      (requires (and (>= (len slug) 3) (<= (len slug) 50)))
+      (requires (and (>= (len title) 1) (<= (len title) 150)))
+      (effect (insert Doc (slug slug) (title title)))
+      (ensures (= (. result slug) slug))
+      (ensures (= (. result title) title))
+      (ensures (= (. result owner) @user)))
+
+    (action rename_doc
+      (allow (owner owner))
+      (allow (role editor))
+      (input (id id) (title text))
+      (effect (update Doc id (title title)))
+      (ensures (= (. result title) title)))
+
+    (action delete_doc
+      (allow (owner owner))
+      (allow (role editor))
+      (input (id id))
+      (effect (delete Doc id)))
+
+    (query all_docs
+      (allow signed-in)
+      (from Doc)
+      (order-by created_at desc))
+
+    (query my_docs
+      (allow signed-in)
+      (from Doc)
+      (where (= owner @user))
+      (order-by created_at desc)))
+
+  (ui
+    (page home "/"
+      (heading "Shared Docs")
+      (form
+        (action create_doc)
+        (field slug (label "Slug"))
+        (field title (label "Title")))
+      (heading "My Documents")
+      (list
+        (query my_docs)
+        (item
+          (text slug)
+          (text title)
+          (form (action rename_doc) (bind id id) (field title (label "New title")))
+          (button (label "Delete") (action delete_doc (id id)))))
+      (heading "All Documents")
+      (list
+        (query all_docs)
+        (item
+          (text slug)
+          (text title)))))
+
+  (tests
+    (case lifecycle
+      (user alice editor)
+      (do create_doc (slug "my-slug") (title "My Title") (by alice) (as d)
+        (expect (= (. result slug) "my-slug"))
+        (expect (= (. result title) "My Title")))
+      (do rename_doc (id (. d id)) (title "Renamed") (by alice)
+        (expect (= (. result title) "Renamed")))
+      (check my_docs (by alice) (expect (= (len result) 1)))
+      (do delete_doc (id (. d id)) (by alice))
+      (check my_docs (by alice) (expect (= (len result) 0))))
+
+    (case ownership_and_editor_override
+      (user alice editor)
+      (user bob author)
+      (user carol author)
+      (do create_doc (slug "bobs-doc") (title "Bob Doc") (by bob) (as d))
+      (fail rename_doc (id (. d id)) (title "Hacked") (by carol))
+      (do rename_doc (id (. d id)) (title "Edited By Editor") (by alice)
+        (expect (= (. result title) "Edited By Editor")))
+      (fail delete_doc (id (. d id)) (by carol))
+      (do delete_doc (id (. d id)) (by bob)))
+
+    (case anon_lockout
+      (fail create_doc (slug "anon-slug") (title "Anon Doc"))
+      (fail all_docs)
+      (fail my_docs))
+
+    (case unique_slug_rejected
+      (user alice editor)
+      (user bob author)
+      (do create_doc (slug "dup-slug") (title "First") (by alice))
+      (fail create_doc (slug "dup-slug") (title "Second") (by bob)))
+
+    (case length_violations
+      (user alice editor)
+      (fail create_doc (slug "ab") (title "Too short slug") (by alice))
+      (fail create_doc (slug "validslug") (title "") (by alice)))
+
+    (case my_docs_scoping
+      (user alice editor)
+      (user bob author)
+      (do create_doc (slug "alice-doc") (title "Alice Doc") (by alice))
+      (do create_doc (slug "bob-doc") (title "Bob Doc") (by bob))
+      (check my_docs (by alice) (expect (= (len result) 1)))
+      (check my_docs (by bob) (expect (= (len result) 1)))
+      (check all_docs (by alice) (expect (= (len result) 2))))
+
+    (case newest_first_ordering
+      (user alice editor)
+      (do create_doc (slug "older-doc") (title "Older") (by alice))
+      (do create_doc (slug "newer-doc") (title "Newer") (by alice))
+      (check all_docs (by alice)
+        (expect (= (len result) 2))
+        (row 0 (as top))
+        (expect (= (. top slug) "newer-doc"))))
+
+    (case unknown_id_rejected
+      (user alice editor)
+      (fail rename_doc (id 999999) (title "Nope") (by alice))
+      (fail delete_doc (id 999999) (by alice)))))

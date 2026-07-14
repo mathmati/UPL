@@ -1,0 +1,162 @@
+(miura 0.1
+  (intent "A team expense-claim tracker. Staff submit expense claims with a unique reference and an amount; managers approve claims; owners (or managers) can withdraw claims.")
+
+  (auth
+    (roles manager staff)
+    (default-role staff)
+    (first-user-role manager))
+
+  (schema
+    (entity Claim
+      (field id (id) (auto))
+      (field reference (text) (unique)
+        (require (and (>= (len reference) 3) (<= (len reference) 40))))
+      (field amount (int) (require (and (>= amount 1) (<= amount 1000000))))
+      (field approved (bool) (default false))
+      (field category (text) (default "general"))
+      (field owner (ref User) (auto @user))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action submit_claim
+      (allow signed-in)
+      (input (reference text) (amount int))
+      (requires (and (>= (len reference) 3) (<= (len reference) 40)))
+      (requires (and (>= amount 1) (<= amount 1000000)))
+      (effect (insert Claim (reference reference) (amount amount) (approved false)))
+      (ensures (= (. result reference) reference))
+      (ensures (= (. result amount) amount))
+      (ensures (= (. result approved) false))
+      (ensures (= (. result category) "general"))
+      (ensures (= (. result owner) @user)))
+
+    (action approve_claim
+      (allow (role manager))
+      (input (id id))
+      (effect (update Claim id (approved true)))
+      (ensures (= (. result approved) true)))
+
+    (action withdraw_claim
+      (allow (owner owner))
+      (allow (role manager))
+      (input (id id))
+      (effect (delete Claim id)))
+
+    (query all_claims
+      (allow signed-in)
+      (from Claim)
+      (order-by created_at desc))
+
+    (query my_claims
+      (allow signed-in)
+      (from Claim)
+      (where (= owner @user))
+      (order-by created_at desc)))
+
+  (ui
+    (page home "/"
+      (heading "Expense Claims")
+      (form
+        (action submit_claim)
+        (field reference (label "Reference"))
+        (field amount (label "Amount")))
+      (heading "All Claims")
+      (list
+        (query all_claims)
+        (item
+          (text reference)
+          (text amount)
+          (text category)
+          (text approved)
+          (button (label "Approve") (action approve_claim (id id)))
+          (button (label "Withdraw") (action withdraw_claim (id id)))))
+      (heading "My Claims")
+      (list
+        (query my_claims)
+        (item
+          (text reference)
+          (text amount)
+          (text category)
+          (text approved)))))
+
+  (tests
+    (case lifecycle
+      (user alice staff)
+      (do submit_claim (reference "REF-001") (amount 100) (by alice) (as c)
+        (expect (= (. result reference) "REF-001"))
+        (expect (= (. result amount) 100))
+        (expect (= (. result approved) false)))
+      (check my_claims (by alice) (expect (= (len result) 1)))
+      (do withdraw_claim (id (. c id)) (by alice))
+      (check my_claims (by alice) (expect (= (len result) 0))))
+
+    (case manager_approval
+      (user boss manager)
+      (user alice staff)
+      (do submit_claim (reference "REF-100") (amount 500) (by alice) (as c))
+      (fail approve_claim (id (. c id)) (by alice))
+      (do approve_claim (id (. c id)) (by boss)
+        (expect (= (. result approved) true)))
+      (check all_claims (by boss) (expect (= (len result) 1))))
+
+    (case ownership_withdraw
+      (user boss manager)
+      (user alice staff)
+      (user bob staff)
+      (do submit_claim (reference "REF-200") (amount 50) (by alice) (as c))
+      (fail withdraw_claim (id (. c id)) (by bob))
+      (do withdraw_claim (id (. c id)) (by alice))
+      (check all_claims (by boss) (expect (= (len result) 0))))
+
+    (case manager_can_withdraw_any
+      (user boss manager)
+      (user alice staff)
+      (do submit_claim (reference "REF-300") (amount 20) (by alice) (as c))
+      (do withdraw_claim (id (. c id)) (by boss))
+      (check all_claims (by boss) (expect (= (len result) 0))))
+
+    (case anonymous_lockout
+      (fail submit_claim (reference "REF-ANON") (amount 10))
+      (fail all_claims)
+      (fail my_claims))
+
+    (case duplicate_reference_rejected
+      (user alice staff)
+      (do submit_claim (reference "DUPREF") (amount 10) (by alice))
+      (fail submit_claim (reference "DUPREF") (amount 20) (by alice)))
+
+    (case amount_out_of_range
+      (user alice staff)
+      (fail submit_claim (reference "BADAMT1") (amount 0) (by alice))
+      (fail submit_claim (reference "BADAMT2") (amount 1000001) (by alice)))
+
+    (case reference_length_bounds
+      (user alice staff)
+      (fail submit_claim (reference "ab") (amount 10) (by alice))
+      (do submit_claim (reference "abc") (amount 10) (by alice)))
+
+    (case my_claims_scoped
+      (user alice staff)
+      (user bob staff)
+      (do submit_claim (reference "ALICE-1") (amount 10) (by alice))
+      (do submit_claim (reference "BOB-1") (amount 10) (by bob))
+      (check my_claims (by alice) (expect (= (len result) 1)))
+      (check my_claims (by bob) (expect (= (len result) 1)))
+      (check all_claims (by alice) (expect (= (len result) 2))))
+
+    (case newest_first
+      (user alice staff)
+      (do submit_claim (reference "OLD-1") (amount 10) (by alice))
+      (do submit_claim (reference "NEW-1") (amount 10) (by alice))
+      (check all_claims (by alice)
+        (expect (= (len result) 2))
+        (row 0 (as top))
+        (expect (= (. top reference) "NEW-1"))))
+
+    (case category_defaults_to_general
+      (user alice staff)
+      (do submit_claim (reference "CAT-001") (amount 10) (by alice)
+        (expect (= (. result category) "general")))
+      (check my_claims (by alice)
+        (row 0 (as c))
+        (expect (= (. c category) "general"))))))

@@ -1,0 +1,133 @@
+(miura 0.1
+  (intent "A shared meeting-room booking board. Signed-in members book a room+time slot with a purpose and an attendee count; slots are unique so no double-booking. Owners can change their booking's purpose or cancel it; admins can cancel any booking. Everyone signed-in can see all bookings or just their own.")
+
+  (auth
+    (roles admin member)
+    (default-role member)
+    (first-user-role admin))
+
+  (schema
+    (entity Booking
+      (field id (id) (auto))
+      (field slot (text) (unique) (require (and (>= (len slot) 3) (<= (len slot) 40))))
+      (field purpose (text) (require (and (>= (len purpose) 1) (<= (len purpose) 120))))
+      (field attendees (int) (default 1))
+      (field owner (ref User) (auto @user))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action book
+      (input (slot text) (purpose text))
+      (allow signed-in)
+      (requires (and (>= (len slot) 3) (<= (len slot) 40)))
+      (requires (and (>= (len purpose) 1) (<= (len purpose) 120)))
+      (effect (insert Booking (slot slot) (purpose purpose)))
+      (ensures (= (. result slot) slot))
+      (ensures (= (. result purpose) purpose))
+      (ensures (= (. result owner) @user))
+      (ensures (= (. result attendees) 1)))
+
+    (action change_purpose
+      (input (id id) (purpose text))
+      (allow (owner owner))
+      (requires (and (>= (len purpose) 1) (<= (len purpose) 120)))
+      (effect (update Booking id (purpose purpose)))
+      (ensures (= (. result purpose) purpose)))
+
+    (action cancel
+      (input (id id))
+      (allow (owner owner))
+      (allow (role admin))
+      (effect (delete Booking id)))
+
+    (query all_bookings
+      (allow signed-in)
+      (from Booking)
+      (order-by created_at desc))
+
+    (query my_bookings
+      (allow signed-in)
+      (from Booking)
+      (where (= owner @user))
+      (order-by created_at desc)))
+
+  (ui
+    (page home "/"
+      (heading "Room Bookings")
+      (form
+        (action book)
+        (field slot (label "Slot (room + time)"))
+        (field purpose (label "Purpose")))
+      (heading "All bookings")
+      (list
+        (query all_bookings)
+        (item
+          (text slot)
+          (text purpose)
+          (text attendees)
+          (form
+            (action change_purpose)
+            (bind id id)
+            (field purpose (label "New purpose")))
+          (button (label "Cancel") (action cancel (id id)))))
+      (heading "My bookings")
+      (list
+        (query my_bookings)
+        (item
+          (text slot)
+          (text purpose)
+          (text attendees)))))
+
+  (tests
+    (case lifecycle
+      (user alice member)
+      (do book (slot "room1-9am") (purpose "Team sync") (by alice) (as b)
+        (expect (= (. result slot) "room1-9am"))
+        (expect (= (. result purpose) "Team sync"))
+        (expect (= (. result attendees) 1)))
+      (do change_purpose (id (. b id)) (purpose "Standup") (by alice)
+        (expect (= (. result purpose) "Standup")))
+      (check all_bookings (by alice) (expect (= (len result) 1)))
+      (check my_bookings (by alice) (expect (= (len result) 1)))
+      (do cancel (id (. b id)) (by alice))
+      (check all_bookings (by alice) (expect (= (len result) 0))))
+
+    (case ownership_and_admin_override
+      (user admin1 admin)
+      (user alice member)
+      (user bob member)
+      (do book (slot "room2-10am") (purpose "Bob's meeting") (by bob) (as b)
+        (expect (= (. result owner) (. bob id)))
+        (expect (= (. result attendees) 1)))
+      (fail change_purpose (id (. b id)) (purpose "hacked") (by alice))
+      (fail cancel (id (. b id)) (by alice))
+      (do cancel (id (. b id)) (by admin1))
+      (check all_bookings (by admin1) (expect (= (len result) 0))))
+
+    (case anonymous_lockout
+      (fail book (slot "room3-11am") (purpose "no one signed in"))
+      (fail all_bookings)
+      (fail my_bookings))
+
+    (case unique_slot_rejected
+      (user alice member)
+      (user bob member)
+      (do book (slot "room4-1pm") (purpose "First") (by alice))
+      (fail book (slot "room4-1pm") (purpose "Second") (by bob)))
+
+    (case validation_errors
+      (user alice member)
+      (fail book (slot "ab") (purpose "Valid purpose") (by alice))
+      (fail book (slot "this-slot-name-is-way-too-long-to-be-a-valid-slot-1234567890") (purpose "Valid purpose") (by alice))
+      (fail book (slot "room7-4pm") (purpose "") (by alice)))
+
+    (case scoped_my_bookings
+      (user alice member)
+      (user bob member)
+      (do book (slot "room5-2pm") (purpose "Alice booking") (by alice))
+      (do book (slot "room6-3pm") (purpose "Bob booking") (by bob))
+      (check my_bookings (by alice)
+        (expect (= (len result) 1))
+        (row 0 (as m))
+        (expect (= (. m slot) "room5-2pm")))
+      (check all_bookings (by alice) (expect (= (len result) 2))))))

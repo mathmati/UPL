@@ -1,0 +1,160 @@
+(miura 0.1
+  (intent "A shared code-snippet locker. Signed-in users save titled code snippets with a body and a language tag (defaulting to plain text). Anyone signed in can browse all snippets, or just their own. Owners can edit or delete their own snippets; admins can edit or delete any snippet.")
+
+  (auth
+    (roles admin member)
+    (default-role member)
+    (first-user-role admin))
+
+  (schema
+    (entity Snippet
+      (field id (id) (auto))
+      (field title (text) (unique)
+        (require (and (>= (len title) 1) (<= (len title) 80))))
+      (field body (text)
+        (require (and (>= (len body) 1) (<= (len body) 4000))))
+      (field language (text) (default "text"))
+      (field owner (ref User) (auto @user))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action save_snippet
+      (allow signed-in)
+      (input (title text) (body text))
+      (requires (>= (len title) 1))
+      (requires (<= (len title) 80))
+      (requires (>= (len body) 1))
+      (requires (<= (len body) 4000))
+      (effect (insert Snippet (title title) (body body)))
+      (ensures (= (. result title) title))
+      (ensures (= (. result body) body))
+      (ensures (= (. result owner) @user)))
+
+    (action edit_snippet
+      (allow (owner owner))
+      (allow (role admin))
+      (input (id id) (body text))
+      (requires (>= (len body) 1))
+      (requires (<= (len body) 4000))
+      (effect (update Snippet id (body body)))
+      (ensures (= (. result body) body)))
+
+    (action delete_snippet
+      (allow (owner owner))
+      (allow (role admin))
+      (input (id id))
+      (effect (delete Snippet id)))
+
+    (query all_snippets
+      (allow signed-in)
+      (from Snippet)
+      (order-by created_at desc))
+
+    (query my_snippets
+      (allow signed-in)
+      (from Snippet)
+      (where (= owner @user))
+      (order-by created_at desc)))
+
+  (ui
+    (page home "/"
+      (heading "Snippet Locker")
+      (form
+        (action save_snippet)
+        (field title (label "Title"))
+        (field body (label "Snippet body")))
+      (heading "All snippets")
+      (list
+        (query all_snippets)
+        (item
+          (text title)
+          (text body)
+          (text language)
+          (form
+            (action edit_snippet)
+            (bind id id)
+            (field body (label "New body")))
+          (button (label "Delete") (action delete_snippet (id id)))))
+      (heading "My snippets")
+      (list
+        (query my_snippets)
+        (item
+          (text title)
+          (text body)
+          (text language)
+          (form
+            (action edit_snippet)
+            (bind id id)
+            (field body (label "New body")))
+          (button (label "Delete") (action delete_snippet (id id)))))))
+
+  (tests
+    (case lifecycle
+      (user alice member)
+      (do save_snippet (title "hello") (body "print('hi')") (by alice) (as s)
+        (expect (= (. result title) "hello"))
+        (expect (= (. result body) "print('hi')")))
+      (do edit_snippet (id (. s id)) (body "print('bye')") (by alice)
+        (expect (= (. result body) "print('bye')")))
+      (check all_snippets (by alice) (expect (= (len result) 1)))
+      (do delete_snippet (id (. s id)) (by alice))
+      (check all_snippets (by alice) (expect (= (len result) 0))))
+
+    (case rejects_bad_input
+      (user alice member)
+      (fail save_snippet (title "") (body "x") (by alice))
+      (fail save_snippet (title "x") (body "") (by alice)))
+
+    (case duplicate_title_rejected
+      (user alice member)
+      (user bob member)
+      (do save_snippet (title "shared") (body "one") (by alice))
+      (fail save_snippet (title "shared") (body "two") (by bob)))
+
+    (case ownership_and_admin_override
+      (user alice admin)
+      (user bob member)
+      (user carol member)
+      (do save_snippet (title "bobs-snippet") (body "bob code") (by bob) (as s)
+        (expect (= (. result owner) (. bob id))))
+      (fail edit_snippet (id (. s id)) (body "hacked") (by carol))
+      (fail delete_snippet (id (. s id)) (by carol))
+      (do edit_snippet (id (. s id)) (body "bob edited") (by bob)
+        (expect (= (. result body) "bob edited")))
+      (do delete_snippet (id (. s id)) (by alice))
+      (check all_snippets (by alice) (expect (= (len result) 0))))
+
+    (case anonymous_lockout
+      (fail save_snippet (title "anon") (body "nope"))
+      (fail all_snippets)
+      (fail my_snippets))
+
+    (case scoped_my_snippets
+      (user alice member)
+      (user bob member)
+      (do save_snippet (title "alice-1") (body "a1") (by alice))
+      (do save_snippet (title "bob-1") (body "b1") (by bob))
+      (check my_snippets (by alice)
+        (expect (= (len result) 1))
+        (row 0 (as alice_top))
+        (expect (= (. alice_top title) "alice-1")))
+      (check my_snippets (by bob)
+        (expect (= (len result) 1))
+        (row 0 (as bob_top))
+        (expect (= (. bob_top title) "bob-1")))
+      (check all_snippets (by alice) (expect (= (len result) 2))))
+
+    (case newest_first
+      (user alice member)
+      (do save_snippet (title "older") (body "o") (by alice))
+      (do save_snippet (title "newer") (body "n") (by alice))
+      (check all_snippets (by alice)
+        (expect (= (len result) 2))
+        (row 0 (as top))
+        (expect (= (. top title) "newer"))))
+
+    (case language_default
+      (user alice member)
+      (do save_snippet (title "defaults") (body "x") (by alice)
+        (expect (= (. result language) "text")))))
+)

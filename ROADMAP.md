@@ -65,12 +65,21 @@ the target tier.
   the guide alone; their failures amend the language)
 - **v1.0** — hardening + docs + the decisive experiment below
 
-## v1 success criterion (falsifiable)
+## v1 success criterion (falsifiable) — first result in
 
-One prompt → a multi-user, role-guarded internal tool with unique
-constraints, ownership, and a schema migration applied to live data —
-where the only human review is reading the bundle. Then rerun the
-head-to-head benchmark at this complexity tier. The bet predicts the
-direct arm starts dropping hidden-oracle checks (auth and migration
-mistakes) while Miura does not. If the gap still doesn't appear, that is
-evidence against the thesis and gets reported just as loudly.
+The auth+migration head-to-head has now been run
+([experiments/2026-07-14-head-to-head-auth.md](experiments/2026-07-14-head-to-head-auth.md)).
+Outcome: **both arms 88/88** on the hidden oracle — the predicted
+correctness gap did **not** appear, and we report that as loudly as the
+roadmap promised. The cost/effort/review-surface gaps held and widened
+(direct arm: 1.47× tokens, 2.8× tool calls, 4.6× larger review surface,
+and its verification was ephemeral while Miura's is carried in the bundle).
+
+Crucial caveat found in the running: the direct arm was **prompted with
+Miura's built-in guarantees as an explicit checklist** (hash passwords,
+persist sessions, enforce ownership, preserve data on migrate), which
+biases toward parity. The remaining decisive experiment: **withhold that
+checklist** (the realistic vibe-coding condition) and/or weaken the model
+and/or multiply the permission rules — that isolates whether Miura's value
+is "correct when you forget to ask," which is the real failure mode, vs.
+"correct when told exactly what to check," which both arms already do.
