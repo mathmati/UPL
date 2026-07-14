@@ -1,0 +1,39 @@
+{
+  "date": "2026-07-14",
+  "model_both_arms": "claude-sonnet",
+  "oracle_note": "One oracle bug found while grading the first arm (a '7-char url' probe that was actually 8 chars); fixed before grading the other arm; neither arm was advantaged.",
+  "tasks": {
+    "bookmarks": {
+      "oracle_checks": 20,
+      "upl":    {"oracle_passed": 20, "tokens": 34916, "tool_uses": 6,  "seconds": 44,  "repair_rounds": 0, "artifact_loc": 93,  "generated_loc": 583},
+      "direct": {"oracle_passed": 20, "tokens": 49285, "tool_uses": 26, "seconds": 190, "repair_rounds": 1, "artifact_loc": 505}
+    },
+    "tickets": {
+      "oracle_checks": 17,
+      "upl":    {"oracle_passed": 17, "tokens": 37520, "tool_uses": 9,  "seconds": 71,  "repair_rounds": 1, "artifact_loc": 108, "generated_loc": 643},
+      "direct": {"oracle_passed": 17, "tokens": 46350, "tool_uses": 20, "seconds": 203, "repair_rounds": 0, "artifact_loc": 437}
+    },
+    "rsvp": {
+      "oracle_checks": 22,
+      "upl":    {"oracle_passed": 22, "tokens": 37026, "tool_uses": 10, "seconds": 65,  "repair_rounds": 2, "artifact_loc": 130, "generated_loc": 669},
+      "direct": {"oracle_passed": 22, "tokens": 46783, "tool_uses": 24, "seconds": 198, "repair_rounds": 0, "artifact_loc": 517}
+    },
+    "flashcards": {
+      "oracle_checks": 21,
+      "upl":    {"oracle_passed": 21, "tokens": 36476, "tool_uses": 8,  "seconds": 51,  "repair_rounds": 1, "artifact_loc": 129, "generated_loc": 694},
+      "direct": {"oracle_passed": 21, "tokens": 49408, "tool_uses": 21, "seconds": 176, "repair_rounds": 1, "artifact_loc": 517}
+    },
+    "wishlist": {
+      "oracle_checks": 17,
+      "upl":    {"oracle_passed": 17, "tokens": 36006, "tool_uses": 7,  "seconds": 58,  "repair_rounds": 0, "artifact_loc": 112, "generated_loc": 639},
+      "direct": {"oracle_passed": 17, "tokens": 51194, "tool_uses": 21, "seconds": 235, "repair_rounds": 1, "artifact_loc": 454}
+    }
+  },
+  "totals": {
+    "oracle": {"upl": "97/97", "direct": "97/97"},
+    "tokens": {"upl": 181944, "direct": 243020, "ratio_direct_over_upl": 1.34},
+    "tool_uses": {"upl": 40, "direct": 112, "ratio": 2.8},
+    "seconds": {"upl": 289, "direct": 1002, "ratio": 3.47},
+    "human_reviewable_loc": {"upl_bundles": 572, "direct_code": 2430, "ratio": 4.25}
+  }
+}

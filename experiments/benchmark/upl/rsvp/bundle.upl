@@ -1,0 +1,130 @@
+(upl 0.1
+  (intent "An event RSVP app: create events, add guests to each event, toggle whether a guest is attending, remove guests, and delete events (which removes their guests too).")
+
+  (schema
+    (entity Event
+      (field id (id) (auto))
+      (field name (text) (require (and (>= (len name) 1) (<= (len name) 100))))
+      (field created_at (timestamp) (auto)))
+
+    (entity Guest
+      (field id (id) (auto))
+      (field event (ref Event) (on-delete cascade))
+      (field name (text) (require (and (>= (len name) 1) (<= (len name) 80))))
+      (field attending (bool) (default true))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action create_event
+      (input (name text))
+      (requires (and (>= (len name) 1) (<= (len name) 100)))
+      (effect (insert Event (name name)))
+      (ensures (= (. result name) name)))
+
+    (action add_guest
+      (input (event_id id) (name text))
+      (requires (and (>= (len name) 1) (<= (len name) 80)))
+      (effect (insert Guest (event event_id) (name name) (attending true)))
+      (ensures (= (. result name) name))
+      (ensures (= (. result attending) true)))
+
+    (action toggle_attending
+      (input (id id))
+      (effect (update Guest id (attending (not (. current attending)))))
+      (ensures (!= (. result attending) (. current attending))))
+
+    (action remove_guest
+      (input (id id))
+      (effect (delete Guest id)))
+
+    (action delete_event
+      (input (id id))
+      (effect (delete Event id)))
+
+    (query list_events
+      (from Event)
+      (order-by created_at desc))
+
+    (query guests_for_event
+      (input (event_id id))
+      (from Guest)
+      (where (= event event_id))
+      (order-by created_at asc)))
+
+  (ui
+    (page home "/"
+      (heading "Events")
+      (form
+        (action create_event)
+        (field name (label "Event name")))
+      (list
+        (query list_events)
+        (item
+          (text name)
+          (button (label "Delete Event") (action delete_event (id id)))
+          (form
+            (action add_guest)
+            (bind event_id id)
+            (field name (label "Guest name")))
+          (list
+            (query guests_for_event (event_id id))
+            (item
+              (checkbox (bind attending) (action toggle_attending (id id)))
+              (text name)
+              (button (label "Remove") (action remove_guest (id id)))))))))
+
+  (tests
+    (case lifecycle
+      (do create_event (name "Birthday Party") (as e)
+        (expect (= (. result name) "Birthday Party")))
+      (do add_guest (event_id (. e id)) (name "Alice") (as g)
+        (expect (= (. result name) "Alice"))
+        (expect (= (. result attending) true)))
+      (do toggle_attending (id (. g id))
+        (expect (= (. result attending) false)))
+      (check (guests_for_event (event_id (. e id)))
+        (expect (= (len result) 1)))
+      (do remove_guest (id (. g id)))
+      (check (guests_for_event (event_id (. e id)))
+        (expect (= (len result) 0)))
+      (do delete_event (id (. e id)))
+      (check list_events
+        (expect (= (len result) 0))))
+
+    (case rejects_bad_names
+      (fail create_event (name ""))
+      (do create_event (name "Valid Event") (as e2))
+      (fail add_guest (event_id (. e2 id)) (name "")))
+
+    (case rejects_unknown_ids
+      (fail add_guest (event_id "does-not-exist") (name "Bob"))
+      (fail toggle_attending (id "does-not-exist"))
+      (fail remove_guest (id "does-not-exist"))
+      (fail delete_event (id "does-not-exist")))
+
+    (case cascade_delete_removes_guests
+      (do create_event (name "Conference") (as e3))
+      (do add_guest (event_id (. e3 id)) (name "Carol"))
+      (do add_guest (event_id (. e3 id)) (name "Dave"))
+      (check (guests_for_event (event_id (. e3 id)))
+        (expect (= (len result) 2)))
+      (do delete_event (id (. e3 id)))
+      (check (guests_for_event (event_id (. e3 id)))
+        (expect (= (len result) 0))))
+
+    (case ordering
+      (do create_event (name "First Event"))
+      (do create_event (name "Second Event"))
+      (check list_events
+        (expect (= (len result) 2))
+        (row 0 (as top))
+        (expect (= (. top name) "Second Event")))
+      (do create_event (name "Guests Order") (as eo))
+      (do add_guest (event_id (. eo id)) (name "First Guest"))
+      (do add_guest (event_id (. eo id)) (name "Second Guest"))
+      (check (guests_for_event (event_id (. eo id)))
+        (expect (= (len result) 2))
+        (row 0 (as g0))
+        (expect (= (. g0 name) "First Guest"))
+        (row 1 (as g1))
+        (expect (= (. g1 name) "Second Guest"))))))

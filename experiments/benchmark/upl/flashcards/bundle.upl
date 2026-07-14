@@ -1,0 +1,129 @@
+(upl 0.1
+  (intent "Flashcards: users create decks, add cards (front/back) to a deck, review cards to increment a review counter, and delete cards or whole decks (deleting a deck also deletes its cards).")
+
+  (schema
+    (entity Deck
+      (field id (id) (auto))
+      (field name (text) (require (and (>= (len name) 1) (<= (len name) 60))))
+      (field created_at (timestamp) (auto)))
+
+    (entity Card
+      (field id (id) (auto))
+      (field deck (ref Deck) (on-delete cascade))
+      (field front (text) (require (and (>= (len front) 1) (<= (len front) 200))))
+      (field back (text) (require (and (>= (len back) 1) (<= (len back) 200))))
+      (field reviews (int) (default 0) (require (>= reviews 0)))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action create_deck
+      (input (name text))
+      (requires (and (>= (len name) 1) (<= (len name) 60)))
+      (effect (insert Deck (name name)))
+      (ensures (= (. result name) name)))
+
+    (action add_card
+      (input (deck_id id) (front text) (back text))
+      (requires (and (>= (len front) 1) (<= (len front) 200)))
+      (requires (and (>= (len back) 1) (<= (len back) 200)))
+      (effect (insert Card (deck deck_id) (front front) (back back) (reviews 0)))
+      (ensures (= (. result front) front))
+      (ensures (= (. result back) back))
+      (ensures (= (. result reviews) 0)))
+
+    (action review_card
+      (input (id id))
+      (effect (update Card id (reviews (+ (. current reviews) 1))))
+      (ensures (= (. result reviews) (+ (. current reviews) 1))))
+
+    (action delete_card
+      (input (id id))
+      (effect (delete Card id)))
+
+    (action delete_deck
+      (input (id id))
+      (effect (delete Deck id)))
+
+    (query list_decks
+      (from Deck)
+      (order-by created_at desc))
+
+    (query cards_for_deck
+      (input (deck_id id))
+      (from Card)
+      (where (= deck deck_id))
+      (order-by created_at asc)))
+
+  (ui
+    (page home "/"
+      (heading "Flashcards")
+      (form
+        (action create_deck)
+        (field name (label "New deck name")))
+      (list
+        (query list_decks)
+        (item
+          (text name)
+          (button (label "Delete deck") (action delete_deck (id id)))
+          (form
+            (action add_card)
+            (bind deck_id id)
+            (field front (label "Front"))
+            (field back (label "Back")))
+          (list
+            (query cards_for_deck (deck_id id))
+            (item
+              (text front)
+              (text back)
+              (text reviews)
+              (button (label "Review") (action review_card (id id)))
+              (button (label "Delete") (action delete_card (id id)))))))))
+
+  (tests
+    (case lifecycle
+      (do create_deck (name "Spanish") (as d)
+        (expect (= (. result name) "Spanish")))
+      (do add_card (deck_id (. d id)) (front "hola") (back "hello") (as c)
+        (expect (= (. result front) "hola"))
+        (expect (= (. result back) "hello"))
+        (expect (= (. result reviews) 0)))
+      (do review_card (id (. c id))
+        (expect (= (. result reviews) 1)))
+      (check (cards_for_deck (deck_id (. d id)))
+        (expect (= (len result) 1)))
+      (do delete_card (id (. c id)))
+      (check (cards_for_deck (deck_id (. d id)))
+        (expect (= (len result) 0))))
+
+    (case rejects_bad_input
+      (fail create_deck (name ""))
+      (do create_deck (name "French") (as d2))
+      (fail add_card (deck_id (. d2 id)) (front "") (back "b"))
+      (fail add_card (deck_id (. d2 id)) (front "f") (back ""))
+      (fail add_card (deck_id "nonexistent") (front "f") (back "b"))
+      (fail review_card (id "nonexistent"))
+      (fail delete_card (id "nonexistent"))
+      (fail delete_deck (id "nonexistent")))
+
+    (case newest_first_decks
+      (do create_deck (name "Older deck"))
+      (do create_deck (name "Newer deck"))
+      (check list_decks
+        (expect (= (len result) 2))
+        (row 0 (as top))
+        (expect (= (. top name) "Newer deck"))))
+
+    (case cards_oldest_first_and_cascade_delete
+      (do create_deck (name "Japanese") (as d3))
+      (do add_card (deck_id (. d3 id)) (front "first") (back "1st") (as c1))
+      (do add_card (deck_id (. d3 id)) (front "second") (back "2nd") (as c2))
+      (check (cards_for_deck (deck_id (. d3 id)))
+        (expect (= (len result) 2))
+        (row 0 (as top))
+        (expect (= (. top front) "first"))
+        (row 1 (as bottom))
+        (expect (= (. bottom front) "second")))
+      (do delete_deck (id (. d3 id)))
+      (check (cards_for_deck (deck_id (. d3 id)))
+        (expect (= (len result) 0)))))
+)

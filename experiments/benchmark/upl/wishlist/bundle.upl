@@ -1,0 +1,112 @@
+(upl 0.1
+  (intent "A prioritized wishlist app: add items with a name and priority, mark or unmark them as purchased, delete items, and view the full list or just the items still to buy, both sorted with highest priority first.")
+
+  (schema
+    (entity Item
+      (field id (id) (auto))
+      (field name (text) (require (and (>= (len name) 1) (<= (len name) 100))))
+      (field priority (int) (require (and (>= priority 1) (<= priority 10))))
+      (field purchased (bool) (default false))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action add_item
+      (input (name text) (priority int))
+      (requires (and (>= (len name) 1) (<= (len name) 100)))
+      (requires (and (>= priority 1) (<= priority 10)))
+      (effect (insert Item (name name) (priority priority) (purchased false)))
+      (ensures (= (. result name) name))
+      (ensures (= (. result priority) priority))
+      (ensures (= (. result purchased) false)))
+
+    (action mark_purchased
+      (input (id id))
+      (effect (update Item id (purchased true)))
+      (ensures (= (. result purchased) true)))
+
+    (action unmark_purchased
+      (input (id id))
+      (effect (update Item id (purchased false)))
+      (ensures (= (. result purchased) false)))
+
+    (action delete_item
+      (input (id id))
+      (effect (delete Item id)))
+
+    (query list_items
+      (from Item)
+      (order-by priority desc))
+
+    (query list_unpurchased
+      (from Item)
+      (where (= purchased false))
+      (order-by priority desc)))
+
+  (ui
+    (page home "/"
+      (heading "Wishlist")
+      (form
+        (action add_item)
+        (field name (label "Item name"))
+        (field priority (label "Priority (1-10)")))
+      (list
+        (query list_items)
+        (item
+          (text name)
+          (text priority)
+          (text purchased)
+          (button (label "Mark purchased") (action mark_purchased (id id)))
+          (button (label "Unmark purchased") (action unmark_purchased (id id)))
+          (button (label "Delete") (action delete_item (id id)))))
+      (heading "Still to buy")
+      (list
+        (query list_unpurchased)
+        (item
+          (text name)
+          (text priority)))))
+
+  (tests
+    (case lifecycle
+      (do add_item (name "Bike") (priority 5) (as t)
+        (expect (= (. result name) "Bike"))
+        (expect (= (. result priority) 5))
+        (expect (= (. result purchased) false)))
+      (do mark_purchased (id (. t id))
+        (expect (= (. result purchased) true)))
+      (check list_items (expect (= (len result) 1)))
+      (do unmark_purchased (id (. t id))
+        (expect (= (. result purchased) false)))
+      (do delete_item (id (. t id)))
+      (check list_items (expect (= (len result) 0))))
+
+    (case rejects_invalid_input
+      (fail add_item (name "") (priority 5))
+      (fail add_item (name "Book") (priority 0))
+      (fail add_item (name "Book") (priority 11)))
+
+    (case rejects_unknown_id
+      (fail mark_purchased (id "does-not-exist"))
+      (fail unmark_purchased (id "does-not-exist"))
+      (fail delete_item (id "does-not-exist")))
+
+    (case priority_ordering
+      (do add_item (name "Low") (priority 2))
+      (do add_item (name "High") (priority 9))
+      (do add_item (name "Mid") (priority 5))
+      (check list_items
+        (expect (= (len result) 3))
+        (row 0 (as top))
+        (expect (= (. top name) "High"))
+        (row 1 (as mid))
+        (expect (= (. mid name) "Mid"))
+        (row 2 (as low))
+        (expect (= (. low name) "Low"))))
+
+    (case still_to_buy
+      (do add_item (name "Kettle") (priority 4) (as a))
+      (do add_item (name "Lamp") (priority 8) (as b))
+      (do mark_purchased (id (. a id)))
+      (check list_unpurchased
+        (expect (= (len result) 1))
+        (row 0 (as only))
+        (expect (= (. only name) "Lamp"))))))

@@ -1,0 +1,93 @@
+(upl 0.1
+  (intent "A personal bookmarks manager: users add bookmarks with a title and url, mark favorites, and delete bookmarks they no longer want.")
+
+  (schema
+    (entity Bookmark
+      (field id (id) (auto))
+      (field title (text) (require (and (>= (len title) 1) (<= (len title) 100))))
+      (field url (text) (require (and (>= (len url) 8) (<= (len url) 500))))
+      (field favorite (bool) (default false))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action add_bookmark
+      (input (title text) (url text))
+      (requires (and (>= (len title) 1) (<= (len title) 100)))
+      (requires (and (>= (len url) 8) (<= (len url) 500)))
+      (effect (insert Bookmark (title title) (url url) (favorite false)))
+      (ensures (= (. result title) title))
+      (ensures (= (. result url) url))
+      (ensures (= (. result favorite) false)))
+
+    (action toggle_favorite
+      (input (id id))
+      (effect (update Bookmark id (favorite (not (. current favorite)))))
+      (ensures (!= (. result favorite) (. current favorite))))
+
+    (action delete_bookmark
+      (input (id id))
+      (effect (delete Bookmark id)))
+
+    (query list_bookmarks
+      (from Bookmark)
+      (order-by created_at desc))
+
+    (query list_favorites
+      (from Bookmark)
+      (where (= favorite true))
+      (order-by created_at desc)))
+
+  (ui
+    (page home "/"
+      (heading "Bookmarks")
+      (form
+        (action add_bookmark)
+        (field title (label "Title"))
+        (field url (label "URL")))
+      (list
+        (query list_bookmarks)
+        (item
+          (checkbox (bind favorite) (action toggle_favorite (id id)))
+          (text title)
+          (text url)
+          (button (label "Delete") (action delete_bookmark (id id)))))))
+
+  (tests
+    (case lifecycle
+      (do add_bookmark (title "Example") (url "https://example.com") (as b)
+        (expect (= (. result title) "Example"))
+        (expect (= (. result url) "https://example.com"))
+        (expect (= (. result favorite) false)))
+      (do toggle_favorite (id (. b id))
+        (expect (= (. result favorite) true)))
+      (check list_bookmarks (expect (= (len result) 1)))
+      (do delete_bookmark (id (. b id)))
+      (check list_bookmarks (expect (= (len result) 0))))
+
+    (case rejects_bad_title_and_url
+      (fail add_bookmark (title "") (url "https://example.com"))
+      (fail add_bookmark (title "ok") (url "short")))
+
+    (case unknown_id_rejected
+      (do add_bookmark (title "Keep" ) (url "https://keep.example") (as k))
+      (fail toggle_favorite (id "does-not-exist"))
+      (fail delete_bookmark (id "does-not-exist"))
+      (check list_bookmarks (expect (= (len result) 1))))
+
+    (case newest_first
+      (do add_bookmark (title "older") (url "https://older.example"))
+      (do add_bookmark (title "newer") (url "https://newer.example"))
+      (check list_bookmarks
+        (expect (= (len result) 2))
+        (row 0 (as top))
+        (expect (= (. top title) "newer"))))
+
+    (case favorites_filter
+      (do add_bookmark (title "One") (url "https://one.example") (as o1))
+      (do add_bookmark (title "Two") (url "https://two.example") (as o2))
+      (do toggle_favorite (id (. o2 id)))
+      (check list_favorites
+        (expect (= (len result) 1))
+        (row 0 (as fav))
+        (expect (= (. fav title) "Two")))))
+)

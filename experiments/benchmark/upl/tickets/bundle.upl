@@ -1,0 +1,108 @@
+(upl 0.1
+  (intent "A tiny support-ticket tracker. Users open tickets with a title and priority, see the full list of tickets (newest first) with controls to close, reopen, or delete each one, and see a separate section listing only the open tickets ordered by highest priority first.")
+
+  (schema
+    (entity Ticket
+      (field id (id) (auto))
+      (field title (text) (require (and (>= (len title) 1) (<= (len title) 120))))
+      (field priority (int) (require (and (>= priority 1) (<= priority 5))))
+      (field open (bool) (default true))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action open_ticket
+      (input (title text) (priority int))
+      (requires (>= (len title) 1))
+      (requires (<= (len title) 120))
+      (requires (>= priority 1))
+      (requires (<= priority 5))
+      (effect (insert Ticket (title title) (priority priority) (open true)))
+      (ensures (= (. result title) title))
+      (ensures (= (. result priority) priority))
+      (ensures (= (. result open) true)))
+
+    (action close_ticket
+      (input (id id))
+      (effect (update Ticket id (open false)))
+      (ensures (= (. result open) false)))
+
+    (action reopen_ticket
+      (input (id id))
+      (effect (update Ticket id (open true)))
+      (ensures (= (. result open) true)))
+
+    (action delete_ticket
+      (input (id id))
+      (effect (delete Ticket id)))
+
+    (query list_tickets
+      (from Ticket)
+      (order-by created_at desc))
+
+    (query list_open
+      (from Ticket)
+      (where (= open true))
+      (order-by priority desc)))
+
+  (ui
+    (page home "/"
+      (heading "Support Tickets")
+      (form
+        (action open_ticket)
+        (field title (label "Title"))
+        (field priority (label "Priority")))
+      (list
+        (query list_tickets)
+        (item
+          (text title)
+          (text priority)
+          (text open)
+          (button (label "Close") (action close_ticket (id id)))
+          (button (label "Reopen") (action reopen_ticket (id id)))
+          (button (label "Delete") (action delete_ticket (id id)))))
+      (heading "Open tickets")
+      (list
+        (query list_open)
+        (item
+          (text title)
+          (text priority)))))
+
+  (tests
+    (case lifecycle
+      (do open_ticket (title "Printer broken") (priority 3) (as t)
+        (expect (= (. result title) "Printer broken"))
+        (expect (= (. result priority) 3))
+        (expect (= (. result open) true)))
+      (do close_ticket (id (. t id))
+        (expect (= (. result open) false)))
+      (do reopen_ticket (id (. t id))
+        (expect (= (. result open) true)))
+      (check list_tickets (expect (= (len result) 1)))
+      (do delete_ticket (id (. t id)))
+      (check list_tickets (expect (= (len result) 0))))
+
+    (case rejects_invalid_input
+      (fail open_ticket (title "") (priority 3))
+      (fail open_ticket (title "Valid title") (priority 0))
+      (fail open_ticket (title "Valid title") (priority 6)))
+
+    (case unknown_id_rejected
+      (do open_ticket (title "Known ticket") (priority 2) (as k))
+      (fail close_ticket (id 999999))
+      (fail reopen_ticket (id 999999))
+      (fail delete_ticket (id 999999))
+      (check list_tickets (expect (= (len result) 1))))
+
+    (case ordering
+      (do open_ticket (title "Low priority issue") (priority 1))
+      (do open_ticket (title "High priority issue") (priority 5))
+      (do open_ticket (title "Mid priority issue") (priority 3) (as m))
+      (check list_tickets
+        (expect (= (len result) 3))
+        (row 0 (as top))
+        (expect (= (. top title) "Mid priority issue")))
+      (do close_ticket (id (. m id)))
+      (check list_open
+        (expect (= (len result) 2))
+        (row 0 (as first_open))
+        (expect (= (. first_open priority) 5))))))

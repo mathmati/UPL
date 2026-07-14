@@ -70,17 +70,21 @@ Two adversarial research audits answer this
   spec-driven-development wave is exactly "your regeneration is
   non-deterministic" — so this is first-mover on an obvious-in-hindsight
   synthesis, not a moat.
-- **Empirical value: ~25%.** Nobody (including us) has run the decisive
-  experiment: matched tasks, UPL-spec-plus-compiler vs. direct LLM codegen,
-  measuring correctness, review effort, and cost. Adjacent evidence is
-  favorable (type-constrained generation halves compile errors;
-  PlanCompiler's registry-constrained plan→compile pipeline reports 92.7%
-  vs 62-67% success and ~6-50x lower cost than direct generation) but the
-  bear case is real: direct codegen reliability is improving fast, and the
-  one benchmark comparing spec-writing to code-writing found *formal* specs
-  harder for LLMs — though our own n=7 first-try results suggest
-  CRUD-shaped specs don't suffer this. The single most valuable next step
-  is the matched-task benchmark, which this repo can run as-is.
+- **Empirical value: partially tested — by us.** The decisive experiment
+  (matched tasks, UPL-spec-plus-compiler vs. direct LLM codegen, graded by
+  a hidden oracle) had never been run by anyone, so we ran it:
+  [`experiments/2026-07-14-head-to-head.md`](experiments/2026-07-14-head-to-head.md).
+  Result on 5 matched apps, same model both arms: **identical correctness
+  (97/97 hidden-oracle checks each), but the UPL arm was 25% cheaper in
+  tokens, 2.8x fewer tool calls, 3.5x faster, with a 4.25x smaller
+  human-review surface** — and its assurance (contracts + tests) lives in
+  the artifact, while the direct arm's testing evaporated with its shell
+  session. Three of five direct-arm agents independently hit the same
+  SQLite threading bug; that bug class cannot exist in compiled bundles.
+  Honest caveats: n=5 small apps inside UPL's domain, one model, and the
+  correctness gap the bet ultimately cares about didn't appear at this
+  scale — the verified claim so far is *same correctness for ~3-4x less
+  work, with durable verification*, not *fewer bugs*.
 
 A second round ([`experiments/2026-07-14-limits.md`](experiments/2026-07-14-limits.md))
 probed the edges: a **maintenance** round (extend an existing bundle without
