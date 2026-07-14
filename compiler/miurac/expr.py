@@ -1,4 +1,4 @@
-"""The UPL expression language: parsing, name resolution, and
+"""The Miura expression language: parsing, name resolution, and
 compilation to Python source. Used by contracts (requires/ensures),
 field validation rules, computed effect values, and query filters."""
 

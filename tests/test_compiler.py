@@ -9,10 +9,10 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "compiler"))
 
-from uplc import BundleError, load  # noqa: E402
-from uplc.sexpr import dumps, parse  # noqa: E402
+from miurac import BundleError, load  # noqa: E402
+from miurac.sexpr import dumps, parse  # noqa: E402
 
-EXAMPLE = os.path.join(ROOT, "examples", "tasks.upl")
+EXAMPLE = os.path.join(ROOT, "examples", "tasks.miura")
 
 
 def read_example():
@@ -79,7 +79,7 @@ class TestLoad(unittest.TestCase):
 
 class TestBundleTests(unittest.TestCase):
     def run_bundle(self, text):
-        from uplc.runner import run_tests
+        from miurac.runner import run_tests
         return run_tests(load(text))
 
     def test_example_cases_pass(self):
@@ -137,7 +137,7 @@ class TestUnpack(unittest.TestCase):
     def unpack(self, out_dir):
         env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "compiler"))
         subprocess.run(
-            [sys.executable, "-m", "uplc", "unpack", EXAMPLE, "-o", out_dir],
+            [sys.executable, "-m", "miurac", "unpack", EXAMPLE, "-o", out_dir],
             check=True, capture_output=True, env=env, cwd=ROOT,
         )
 
@@ -158,7 +158,7 @@ class TestUnpack(unittest.TestCase):
 
         def verify(out_dir):
             return subprocess.run(
-                [sys.executable, "-m", "uplc", "verify", EXAMPLE, "-o", out_dir],
+                [sys.executable, "-m", "miurac", "verify", EXAMPLE, "-o", out_dir],
                 capture_output=True, env=env, cwd=ROOT, text=True,
             )
 

@@ -1,4 +1,4 @@
-(upl 0.1
+(miura 0.1
   (intent "A guestbook where visitors leave an entry with their name and a message; entries are listed newest first, with no editing or deleting.")
 
   (schema

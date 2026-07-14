@@ -1,6 +1,6 @@
-; UPL v0.3 bundle — a micro-blog exercising relations:
+; Miura bundle — a micro-blog exercising relations:
 ; (ref Entity) fields, parameterized queries, and row-scoped nested UI.
-(upl 0.1
+(miura 0.1
   (intent "A micro-blog. Authors write posts with a title and body. Readers leave comments on a specific post; each post shows its own comments and a comment form. Deleting a post deletes its comments. Comments can be deleted individually.")
   (schema
     (entity Post

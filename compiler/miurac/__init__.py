@@ -1,4 +1,4 @@
-"""uplc — the UPL v0.1 bundle compiler."""
+"""miurac — the Miura bundle compiler."""
 
 from .model import App, BundleError, load  # noqa: F401
 

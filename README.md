@@ -1,4 +1,6 @@
-# UPL — A Universal Programming Language, by AI, for AI
+# Miura — an AI-native application language
+
+*Formerly "UPL"; renamed after a naming audit ([`research/07-naming.md`](research/07-naming.md)) — the [Miura fold](https://en.wikipedia.org/wiki/Miura_fold) is the origami fold that collapses and deploys identically every time, which is this language's core property: one small folded bundle, deterministically unfolded into a whole application. (GitHub repo name pending rename.)*
 
 *Built with [Claude Code](https://claude.com/claude-code).*
 
@@ -6,19 +8,19 @@ Research into the idea sparked by this tweet:
 
 > "I wonder if we will ever see a new programming language go mainstream. If one does, it might serve the opposite purpose of every programming language humans have ever seen. Instead of making programming more accessible to humans it will be less accessible."
 
-This repo contains both the research that scoped the idea and a **working v0.1 implementation**: a bundle language + deterministic compiler that unpacks one `.upl` file into a runnable Python server, an HTML/JS frontend, and a SQL schema, with contracts enforced at runtime.
+This repo contains both the research that scoped the idea and a **working v0.1 implementation**: a bundle language + deterministic compiler that unpacks one `.miura` file into a runnable Python server, an HTML/JS frontend, and a SQL schema, with contracts enforced at runtime.
 
 ## Quickstart
 
 ```sh
 # validate a bundle (add --json for machine-readable diagnostics)
-PYTHONPATH=compiler python3 -m uplc check examples/tasks.upl
+PYTHONPATH=compiler python3 -m miurac check examples/tasks.miura
 
 # run the bundle's own acceptance tests against its unpacked app
-PYTHONPATH=compiler python3 -m uplc test examples/tasks.upl
+PYTHONPATH=compiler python3 -m miurac test examples/tasks.miura
 
 # unpack it into runnable targets
-PYTHONPATH=compiler python3 -m uplc unpack examples/tasks.upl -o build
+PYTHONPATH=compiler python3 -m miurac unpack examples/tasks.miura -o build
 
 # run the generated app (zero dependencies — stdlib only)
 python3 build/server/app.py     # → http://127.0.0.1:8000
@@ -27,15 +29,15 @@ python3 build/server/app.py     # → http://127.0.0.1:8000
 python3 -m unittest discover -s tests
 ```
 
-The demo bundle ([`examples/tasks.upl`](examples/tasks.upl)) is a complete task tracker — schema, actions with `requires`/`ensures` contracts, a query, and a UI — in 36 lines of UPL. It unpacks into ~340 lines of Python, HTML/JS, and SQL.
+The demo bundle ([`examples/tasks.miura`](examples/tasks.miura)) is a complete task tracker — schema, actions with `requires`/`ensures` contracts, a query, and a UI — in 36 lines of Miura. It unpacks into ~340 lines of Python, HTML/JS, and SQL.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| [`spec/SPEC.md`](spec/SPEC.md) | UPL language specification |
-| [`compiler/uplc/`](compiler/uplc/) | The compiler: reader/canonical printer, expression language, validator, bundle test runner, and deterministic emitters (Python, web, SQL) |
-| [`docs/upl-for-agents.md`](docs/upl-for-agents.md) | The authoring guide an LLM writes UPL from (spec-in-context) |
+| [`spec/SPEC.md`](spec/SPEC.md) | Miura language specification |
+| [`compiler/miurac/`](compiler/miurac/) | The compiler: reader/canonical printer, expression language, validator, bundle test runner, and deterministic emitters (Python, web, SQL) |
+| [`docs/miura-for-agents.md`](docs/miura-for-agents.md) | The authoring guide an LLM writes Miura from (spec-in-context) |
 | [`examples/`](examples/) | Five app bundles — four of them written by AI agents that had never seen the language |
 | [`experiments/`](experiments/) | Empirical results on AI authorship |
 | [`tests/`](tests/) | Compiler tests + end-to-end runtime tests |
@@ -43,7 +45,7 @@ The demo bundle ([`examples/tasks.upl`](examples/tasks.upl)) is a complete task 
 
 ## Does the core bet hold? First evidence: yes
 
-UPL has zero training data in any model, which the research flagged as the
+Miura has zero training data in any model, which the research flagged as the
 single biggest threat to any new language ("corpus gravity"). So we tested
 the mitigation: four mid-tier (Claude Sonnet) agents, each given **only**
 the authoring guide, wrote bundles for four different apps — guestbook,
@@ -63,7 +65,7 @@ Two adversarial research audits answer this
   deterministic compiler with hash identity + self-carried contracts and
   tests + LLM-native authorship) appears unclaimed. The closest product,
   Remy, matches the "spec is the program" shape but explicitly uses an LLM
-  as its compiler and accepts non-determinism — the precise bet UPL refuses.
+  as its compiler and accepts non-determinism — the precise bet Miura refuses.
   Tessl folds on the same point. Wasp has the deterministic compiler but is
   human-oriented, contract-free, and retreating from its own DSL. Caveat:
   the field is visibly circling this gap — the loudest criticism of the
@@ -71,17 +73,17 @@ Two adversarial research audits answer this
   non-deterministic" — so this is first-mover on an obvious-in-hindsight
   synthesis, not a moat.
 - **Empirical value: partially tested — by us.** The decisive experiment
-  (matched tasks, UPL-spec-plus-compiler vs. direct LLM codegen, graded by
+  (matched tasks, Miura-spec-plus-compiler vs. direct LLM codegen, graded by
   a hidden oracle) had never been run by anyone, so we ran it:
   [`experiments/2026-07-14-head-to-head.md`](experiments/2026-07-14-head-to-head.md).
   Result on 5 matched apps, same model both arms: **identical correctness
-  (97/97 hidden-oracle checks each), but the UPL arm was 25% cheaper in
+  (97/97 hidden-oracle checks each), but the Miura arm was 25% cheaper in
   tokens, 2.8x fewer tool calls, 3.5x faster, with a 4.25x smaller
   human-review surface** — and its assurance (contracts + tests) lives in
   the artifact, while the direct arm's testing evaporated with its shell
   session. Three of five direct-arm agents independently hit the same
   SQLite threading bug; that bug class cannot exist in compiled bundles.
-  Honest caveats: n=5 small apps inside UPL's domain, one model, and the
+  Honest caveats: n=5 small apps inside Miura's domain, one model, and the
   correctness gap the bet ultimately cares about didn't appear at this
   scale — the verified claim so far is *same correctness for ~3-4x less
   work, with durable verification*, not *fewer bugs*.
@@ -97,12 +99,12 @@ with proposed syntax instead of hallucinated code, because whole-bundle
 name resolution rejects anything invented. That proposal became the
 relations feature set the same day: `(ref Entity)` fields with enforced
 integrity and restrict/cascade deletes, parameterized queries, and
-row-scoped nested UI ([`examples/blog.upl`](examples/blog.upl)).
+row-scoped nested UI ([`examples/blog.miura`](examples/blog.miura)).
 
 ## Design principles (from the research)
 
 1. **AI at the boundaries, determinism in the middle.** An AI authors and edits the bundle; the unpacker is a plain deterministic compiler — the same bundle always produces byte-identical output (tested). Diffs stay reviewable, caching works, and "does the artifact match the bundle?" is decidable.
-2. **Canonical form.** One valid serialization per bundle (`uplc fmt`); its sha256 is the program's identity and is stamped into every generated file.
+2. **Canonical form.** One valid serialization per bundle (`miurac fmt`); its sha256 is the program's identity and is stamped into every generated file.
 3. **Contracts are the audit surface.** `requires`/`ensures`/field `require` compile into the targets and are enforced at runtime (400 for client contract violations, 500 for ensures failures — i.e., compiler bugs). Humans audit the bundle; machines check the code.
 4. **Generated artifacts are cattle.** Every output carries a `DO NOT EDIT` header naming its source bundle and hash.
 
@@ -136,7 +138,7 @@ Two rival concepts were explored, plus a feasibility study and a survey of who's
 
 So "bundle vs. single language" turns out to be a go-to-market question, not an architecture question: the bundle (transpile to incumbents) is the viable first decade because it rides existing ecosystems and model competence; the single language is the better end state because you can't verify or optimize across a Python/SQL/JS seam. Feasibility ratings landed at ~6/10 for the bundle in constrained domains within 5 years, ~4/10 for full replacement within 10 — but 7/10 if bootstrapped IR-first.
 
-**4. You could start building it today, and the first version is months, not years.** Every component exists off the shelf: MLIR for the compiler spine, WASM + WASI + Component Model as the universal runtime (67% of surveyed users now run WASM in production; typed language-neutral component boundaries via WIT), grammar-constrained decoding to *guarantee* LLMs emit only syntactically valid programs, tree-sitter for tooling, Dafny/Verus-style verifiers for the contract loop. A credible v0.1 — natural-language intent → UPL → verified → runnable WASM + readable Python/TS — is a small-team, 3–9 month project. See report 03 for the staged roadmap.
+**4. You could start building it today, and the first version is months, not years.** Every component exists off the shelf: MLIR for the compiler spine, WASM + WASI + Component Model as the universal runtime (67% of surveyed users now run WASM in production; typed language-neutral component boundaries via WIT), grammar-constrained decoding to *guarantee* LLMs emit only syntactically valid programs, tree-sitter for tooling, Dafny/Verus-style verifiers for the contract loop. A credible v0.1 — natural-language intent → Miura → verified → runnable WASM + readable Python/TS — is a small-team, 3–9 month project. See report 03 for the staged roadmap.
 
 **5. People are already circling this, but nobody has landed it.** MoonBit is the flagship self-declared "AI-native" language; a 2025–26 wave of experimental agent languages (Vercel's zerolang, Sigil, Mog, Jacquard) is testing individual ideas (program-as-graph, canonical form, capability systems); the big money ($125M Tessl, GitHub Spec Kit, Amazon Kiro) is going to the *spec layer above* the language rather than a new language; and the labs' revealed preference is verifiers-as-reward (Lean, Dafny) rather than new syntax. The niche this project describes — a verified, canonical, multi-target semantic IR as the AI's native output format — is genuinely unoccupied.
 
@@ -152,4 +154,4 @@ A layered hybrid rather than a coup: Python/TS/Go remain the dominant *generated
 
 ## Where a project like this one could start
 
-The minimal viable version both concept reports converged on: a typed, layered `.upl` bundle format for **one narrow vertical** (internal business web apps — schema + workflows + UI + infra), with a deterministic compiler to exactly two stacks (e.g. FastAPI+Postgres and React, shared logic as a WASM component), mandatory contracts checked in the generation loop, generated code marked non-editable, and an AI "lift" tool that folds hand-patches back into the bundle. The success criterion that killed every predecessor: survive two years of real *maintenance* and one framework migration without anyone abandoning the bundle. Demos always worked; maintenance is the game.
+The minimal viable version both concept reports converged on: a typed, layered `.miura` bundle format for **one narrow vertical** (internal business web apps — schema + workflows + UI + infra), with a deterministic compiler to exactly two stacks (e.g. FastAPI+Postgres and React, shared logic as a WASM component), mandatory contracts checked in the generation loop, generated code marked non-editable, and an AI "lift" tool that folds hand-patches back into the bundle. The success criterion that killed every predecessor: survive two years of real *maintenance* and one framework migration without anyone abandoning the bundle. Demos always worked; maintenance is the game.

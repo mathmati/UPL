@@ -1,4 +1,4 @@
-(upl 0.1
+(miura 0.1
   (intent "A habit tracker: users create habits with a name, mark them done with a Did it button that increments a streak counter, reset the streak to zero, delete habits, and see all habits listed with the highest streak first.")
 
   (schema

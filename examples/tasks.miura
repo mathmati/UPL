@@ -1,6 +1,6 @@
-; UPL v0.1 bundle — a minimal task tracker.
-; Unpack: python -m uplc unpack examples/tasks.upl -o build
-(upl 0.1
+; Miura bundle — a minimal task tracker.
+; Unpack: python -m miurac unpack examples/tasks.miura -o build
+(miura 0.1
   (intent "A minimal task tracker. Users add tasks with a short title, see them newest-first, mark them done or not done with a checkbox, and delete them. Titles must be 1-200 characters.")
   (schema
     (entity Task

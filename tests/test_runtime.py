@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXAMPLE = os.path.join(ROOT, "examples", "tasks.upl")
+EXAMPLE = os.path.join(ROOT, "examples", "tasks.miura")
 
 
 def free_port():
@@ -28,14 +28,14 @@ class TestGeneratedApp(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "compiler"))
         subprocess.run(
-            [sys.executable, "-m", "uplc", "unpack", EXAMPLE, "-o", cls.tmp.name],
+            [sys.executable, "-m", "miurac", "unpack", EXAMPLE, "-o", cls.tmp.name],
             check=True, capture_output=True, env=env, cwd=ROOT,
         )
         cls.port = free_port()
         cls.base = f"http://127.0.0.1:{cls.port}"
         cls.proc = subprocess.Popen(
             [sys.executable, os.path.join(cls.tmp.name, "server", "app.py")],
-            env=dict(os.environ, UPL_PORT=str(cls.port), UPL_DB=os.path.join(cls.tmp.name, "test.db")),
+            env=dict(os.environ, MIURA_PORT=str(cls.port), MIURA_DB=os.path.join(cls.tmp.name, "test.db")),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         deadline = time.time() + 15

@@ -1,7 +1,7 @@
-# UPL v0.1 — Language Specification
+# Miura v0.1 — Language Specification
 
-UPL is a bundle format: one file describes a whole application (data,
-logic, contracts, UI), and a **deterministic** compiler (`uplc`) unpacks
+Miura is a bundle format: one file describes a whole application (data,
+logic, contracts, UI), and a **deterministic** compiler (`miurac`) unpacks
 it into runnable targets. v0.1 targets: a zero-dependency Python server,
 a self-contained HTML/JS page, and a SQLite schema.
 
@@ -10,7 +10,7 @@ Design rules (from the research in `research/`):
 1. **AI at the boundaries, determinism in the middle.** An AI writes and
    edits the bundle; the unpacker is a plain compiler. The same bundle
    always produces byte-identical output.
-2. **Canonical form.** `uplc fmt` produces the single valid
+2. **Canonical form.** `miurac fmt` produces the single valid
    serialization; `sha256(canonical)` is the bundle's identity and is
    stamped into every generated artifact.
 3. **Contracts are load-bearing.** `requires`/`ensures`/`require` are
@@ -30,7 +30,7 @@ Comments: `;` to end of line.
 ## Bundle structure
 
 ```
-(upl 0.1
+(miura 0.1
   (intent "one paragraph of natural-language intent")
   (schema (entity ...) ...)
   (workflow (action ...) (query ...) ...)
@@ -151,7 +151,7 @@ action; args pull values from the current row's fields.
 
 ### tests
 
-Acceptance cases carried by the bundle itself; `uplc test` runs them
+Acceptance cases carried by the bundle itself; `miurac test` runs them
 against the bundle's own unpacked Python target (each case on a fresh
 database), so the bundle is self-verifying.
 
@@ -181,7 +181,7 @@ time; input lists must be covered exactly.
 
 ## Unpacking
 
-`python -m uplc unpack app.upl -o build` writes:
+`python -m miurac unpack app.miura -o build` writes:
 
 | Target | Contents |
 |---|---|
@@ -192,18 +192,18 @@ time; input lists must be covered exactly.
 API mapping: action → `POST /api/<name>` (JSON body = inputs),
 query → `GET /api/<name>`, page routes serve the HTML.
 
-Environment: `UPL_PORT` (default 8000), `UPL_DB` (default
+Environment: `MIURA_PORT` (default 8000), `MIURA_DB` (default
 `server/app.db`).
 
 ## CLI
 
 | Command | Purpose |
 |---|---|
-| `uplc check bundle [--json]` | parse + validate; JSON diagnostics carry a `path` into the bundle |
-| `uplc fmt bundle [--write]` | canonical form |
-| `uplc test bundle [--json]` | run the bundle's `(tests ...)` cases against its unpacked app |
-| `uplc unpack bundle -o dir` | write server/web/db targets |
-| `uplc verify bundle -o dir [--json]` | drift detection: exit 1 if on-disk artifacts don't match what the bundle generates |
+| `miurac check bundle [--json]` | parse + validate; JSON diagnostics carry a `path` into the bundle |
+| `miurac fmt bundle [--write]` | canonical form |
+| `miurac test bundle [--json]` | run the bundle's `(tests ...)` cases against its unpacked app |
+| `miurac unpack bundle -o dir` | write server/web/db targets |
+| `miurac verify bundle -o dir [--json]` | drift detection: exit 1 if on-disk artifacts don't match what the bundle generates |
 
 ## Not yet in the language (deliberately)
 

@@ -1,4 +1,4 @@
-(upl 0.1
+(miura 0.1
   (intent "An inventory counter. Items have a name and a quantity that starts at zero. Buttons increment and decrement an item's quantity, and quantity can never drop below zero. A restock form adds a chosen number of units to an item in one step. A low-stock view lists items with quantity below 5, lowest first. Items can be deleted.")
 
   (schema

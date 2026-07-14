@@ -1,4 +1,4 @@
-(upl 0.1
+(miura 0.1
   (intent "A quick poll app: an admin adds answer options, visitors vote for their favorite by incrementing its count, and options can be deleted. Options are listed with the most votes first.")
 
   (schema

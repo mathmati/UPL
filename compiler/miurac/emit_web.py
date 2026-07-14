@@ -56,20 +56,20 @@ form { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; }
 form label { display: flex; flex-direction: column; font-size: 0.85rem; gap: 0.15rem; }
 input[type=text], input[type=number] { padding: 0.4rem 0.6rem; font-size: 1rem; }
 button { padding: 0.4rem 0.8rem; font-size: 0.95rem; cursor: pointer; }
-.upl-list { display: flex; flex-direction: column; gap: 0.35rem; margin: 1rem 0; }
-.upl-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.6rem; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 6px; flex-wrap: wrap; }
-.upl-item .upl-text { flex: 1; overflow-wrap: anywhere; }
-.upl-item .upl-nested, .upl-item form, .upl-item .upl-subheading { flex-basis: 100%; }
-.upl-nested { margin-left: 1.2rem; }
-.upl-subheading { font-size: 1rem; margin: 0.3rem 0 0; }
-#upl-error { color: #b3261e; min-height: 1.4em; font-size: 0.9rem; }
-.upl-nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
+.miura-list { display: flex; flex-direction: column; gap: 0.35rem; margin: 1rem 0; }
+.miura-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.6rem; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); border-radius: 6px; flex-wrap: wrap; }
+.miura-item .miura-text { flex: 1; overflow-wrap: anywhere; }
+.miura-item .miura-nested, .miura-item form, .miura-item .miura-subheading { flex-basis: 100%; }
+.miura-nested { margin-left: 1.2rem; }
+.miura-subheading { font-size: 1rem; margin: 0.3rem 0 0; }
+#miura-error { color: #b3261e; min-height: 1.4em; font-size: 0.9rem; }
+.miura-nav { display: flex; gap: 1rem; margin-bottom: 1rem; }
 """
 
 _RUNTIME_JS = """\
 'use strict';
 
-const $error = () => document.getElementById('upl-error');
+const $error = () => document.getElementById('miura-error');
 let errorTimer = null;
 
 function showError(message) {
@@ -127,11 +127,11 @@ async function renderList(c, el, row) {
 
 async function renderItem(components, row) {
   const item = document.createElement('div');
-  item.className = 'upl-item';
+  item.className = 'miura-item';
   for (const c of components) {
     if (c.kind === 'text') {
       const span = document.createElement('span');
-      span.className = 'upl-text';
+      span.className = 'miura-text';
       span.textContent = String(row[c.field]);
       item.appendChild(span);
     } else if (c.kind === 'checkbox') {
@@ -153,14 +153,14 @@ async function renderItem(components, row) {
       item.appendChild(btn);
     } else if (c.kind === 'heading') {
       const h = document.createElement('h2');
-      h.className = 'upl-subheading';
+      h.className = 'miura-subheading';
       h.textContent = c.text;
       item.appendChild(h);
     } else if (c.kind === 'form') {
       item.appendChild(buildForm(c, row));
     } else if (c.kind === 'list') {
       const el = document.createElement('div');
-      el.className = 'upl-list upl-nested';
+      el.className = 'miura-list miura-nested';
       await renderList(c, el, row);
       item.appendChild(el);
     }
@@ -214,18 +214,18 @@ function renderComponent(c, root) {
     root.appendChild(buildForm(c, null));
   } else if (c.kind === 'list') {
     const el = document.createElement('div');
-    el.className = 'upl-list';
+    el.className = 'miura-list';
     topLists.push({ c, el });
     root.appendChild(el);
   }
 }
 
 function main() {
-  const root = document.getElementById('upl-root');
+  const root = document.getElementById('miura-root');
   const page = UI_MODEL.pages.find((p) => p.route === location.pathname) || UI_MODEL.pages[0];
   if (UI_MODEL.pages.length > 1) {
     const nav = document.createElement('nav');
-    nav.className = 'upl-nav';
+    nav.className = 'miura-nav';
     for (const p of UI_MODEL.pages) {
       const link = document.createElement('a');
       link.href = p.route;
@@ -261,8 +261,8 @@ def emit_web(app: App, header: str) -> str:
 {_RUNTIME_CSS}</style>
 </head>
 <body>
-<div id="upl-error"></div>
-<div id="upl-root"></div>
+<div id="miura-error"></div>
+<div id="miura-root"></div>
 <script>
 const UI_MODEL = {model};
 

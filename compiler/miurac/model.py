@@ -1,9 +1,9 @@
-"""The UPL v0.1 bundle model: dataclasses, the loader from
+"""The Miura bundle model: dataclasses, the loader from
 s-expressions, and whole-bundle validation.
 
 A bundle is:
 
-  (upl 0.1
+  (miura 0.1
     (intent "...")
     (schema (entity ...) ...)
     (workflow (action ...) (query ...) ...)
@@ -232,7 +232,9 @@ def _sections(items, path, allowed):
 
 def _load_tree(tree) -> App:
     path = "bundle"
-    _expect(isinstance(tree, list) and len(tree) >= 2 and tree[0] == Sym("upl"), path, "bundle must start with (upl 0.1 ...)")
+    # "upl" is the language's pre-rename head symbol, kept as a legacy alias
+    # so historical bundles (e.g. experiments/benchmark/) still compile.
+    _expect(isinstance(tree, list) and len(tree) >= 2 and tree[0] in (Sym("miura"), Sym("upl")), path, "bundle must start with (miura 0.1 ...)")
     _expect(str(tree[1]) == "0.1", path, f"unsupported version {tree[1]!r}, expected 0.1")
     sections = _sections(tree[2:], path, ["intent", "schema", "workflow", "ui", "tests"])
     for required in ("intent", "schema", "workflow", "ui"):

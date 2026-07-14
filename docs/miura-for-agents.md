@@ -1,6 +1,6 @@
-# Writing UPL — Guide for AI Agents
+# Writing Miura — Guide for AI Agents
 
-You are writing a **UPL bundle**: one `.upl` file that describes a complete
+You are writing a **Miura bundle**: one `.upl` file that describes a complete
 web application (data, logic, contracts, UI, and acceptance tests). A
 deterministic compiler unpacks it into a runnable Python server, an HTML/JS
 page, and a SQL schema. You never write Python/HTML/SQL — only the bundle.
@@ -8,8 +8,8 @@ page, and a SQL schema. You never write Python/HTML/SQL — only the bundle.
 Your loop:
 
 ```sh
-PYTHONPATH=compiler python3 -m uplc check app.upl --json   # validate
-PYTHONPATH=compiler python3 -m uplc test  app.upl --json   # run the bundle's own tests
+PYTHONPATH=compiler python3 -m miurac check app.upl --json   # validate
+PYTHONPATH=compiler python3 -m miurac test  app.upl --json   # run the bundle's own tests
 ```
 
 Repair until both report `"ok": true`. Compile errors carry a `path` into
@@ -25,7 +25,7 @@ strings (quotes).
 ## Bundle skeleton (section order is fixed)
 
 ```
-(upl 0.1
+(miura 0.1
   (intent "One paragraph: what the app does, in plain language.")
   (schema ...)
   (workflow ...)

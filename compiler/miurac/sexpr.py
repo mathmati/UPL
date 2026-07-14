@@ -1,4 +1,4 @@
-"""S-expression reader and canonical printer for UPL bundles.
+"""S-expression reader and canonical printer for Miura bundles.
 
 The canonical form is the single valid serialization of a bundle:
 parse + dumps is idempotent, so `sha256(dumps(parse(text)))` is a

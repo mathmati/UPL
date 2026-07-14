@@ -34,7 +34,7 @@ def _load_module(app: App, workdir: str):
     with open(app_path, "w", encoding="utf-8") as fh:
         fh.write(emit_python(app, "test build — not for deployment"))
     db_path = os.path.join(workdir, "test.db")
-    os.environ["UPL_DB"] = db_path
+    os.environ["MIURA_DB"] = os.environ["UPL_DB"] = db_path
     spec = importlib.util.spec_from_file_location("upl_generated_app", app_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
