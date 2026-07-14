@@ -110,6 +110,14 @@ row-scoped nested UI ([`examples/blog.miura`](examples/blog.miura)).
 
 ---
 
+## Where this is going
+
+The v1 strategy — own everything that must not break (auth, migrations,
+transactions, uniqueness, aggregates), and leave high-variance creative
+work to direct generation — is laid out in [ROADMAP.md](ROADMAP.md).
+
+---
+
 ## The research
 
 Two rival concepts were explored, plus a feasibility study and a survey of who's already building in this space. The full reports live in [`research/`](research/); the rest of this README is the synthesis.
