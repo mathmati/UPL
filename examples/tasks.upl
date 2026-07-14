@@ -53,4 +53,7 @@
     (case newest_first
       (do create_task (title "older") (as a))
       (do create_task (title "newer"))
-      (check list_tasks (expect (= (len result) 2))))))
+      (check list_tasks
+        (expect (= (len result) 2))
+        (row 0 (as top))
+        (expect (= (. top title) "newer"))))))

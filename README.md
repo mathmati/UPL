@@ -1,5 +1,7 @@
 # UPL — A Universal Programming Language, by AI, for AI
 
+*Built with [Claude Code](https://claude.com/claude-code).*
+
 Research into the idea sparked by this tweet:
 
 > "I wonder if we will ever see a new programming language go mainstream. If one does, it might serve the opposite purpose of every programming language humans have ever seen. Instead of making programming more accessible to humans it will be less accessible."
@@ -31,11 +33,25 @@ The demo bundle ([`examples/tasks.upl`](examples/tasks.upl)) is a complete task 
 
 | Path | What |
 |---|---|
-| [`spec/SPEC.md`](spec/SPEC.md) | UPL v0.1 language specification |
-| [`compiler/uplc/`](compiler/uplc/) | The compiler: reader/canonical printer, expression language, validator, and deterministic emitters (Python, web, SQL) |
-| [`examples/tasks.upl`](examples/tasks.upl) | Demo bundle |
+| [`spec/SPEC.md`](spec/SPEC.md) | UPL language specification |
+| [`compiler/uplc/`](compiler/uplc/) | The compiler: reader/canonical printer, expression language, validator, bundle test runner, and deterministic emitters (Python, web, SQL) |
+| [`docs/upl-for-agents.md`](docs/upl-for-agents.md) | The authoring guide an LLM writes UPL from (spec-in-context) |
+| [`examples/`](examples/) | Five app bundles — four of them written by AI agents that had never seen the language |
+| [`experiments/`](experiments/) | Empirical results on AI authorship |
 | [`tests/`](tests/) | Compiler tests + end-to-end runtime tests |
 | [`research/`](research/) | The four research reports that scoped the design |
+
+## Does the core bet hold? First evidence: yes
+
+UPL has zero training data in any model, which the research flagged as the
+single biggest threat to any new language ("corpus gravity"). So we tested
+the mitigation: four mid-tier (Claude Sonnet) agents, each given **only**
+the authoring guide, wrote bundles for four different apps — guestbook,
+inventory with a reject-below-zero contract, poll, habit tracker.
+**All four produced fully correct, contract-carrying, test-passing bundles
+on the first attempt — zero repair rounds** — and their feedback drove one
+language feature (ordering assertions in tests) and five guide fixes the
+same day. Details in [`experiments/2026-07-14-authoring.md`](experiments/2026-07-14-authoring.md).
 
 ## Design principles (from the research)
 

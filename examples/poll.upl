@@ -1,0 +1,61 @@
+(upl 0.1
+  (intent "A quick poll app: an admin adds answer options, visitors vote for their favorite by incrementing its count, and options can be deleted. Options are listed with the most votes first.")
+
+  (schema
+    (entity Option
+      (field id (id) (auto))
+      (field label (text) (require (and (>= (len label) 1) (<= (len label) 80))))
+      (field votes (int) (default 0))))
+
+  (workflow
+    (action add_option
+      (input (label text))
+      (requires (and (>= (len label) 1) (<= (len label) 80)))
+      (effect (insert Option (label label) (votes 0)))
+      (ensures (and (= (. result label) label) (= (. result votes) 0))))
+
+    (action vote
+      (input (id id))
+      (effect (update Option id (votes (+ (. current votes) 1))))
+      (ensures (= (. result votes) (+ (. current votes) 1))))
+
+    (action delete_option
+      (input (id id))
+      (effect (delete Option id)))
+
+    (query list_options
+      (from Option)
+      (order-by votes desc)))
+
+  (ui
+    (page home "/"
+      (heading "Poll")
+      (form
+        (action add_option)
+        (field label (label "New option")))
+      (list
+        (query list_options)
+        (item
+          (text label)
+          (text votes)
+          (button (label "Vote") (action vote (id id)))
+          (button (label "Delete") (action delete_option (id id)))))))
+
+  (tests
+    (case lifecycle
+      (do add_option (label "Cats") (as o)
+        (expect (= (. result label) "Cats"))
+        (expect (= (. result votes) 0)))
+      (do vote (id (. o id)) (expect (= (. result votes) 1)))
+      (check list_options (expect (= (len result) 1)))
+      (do delete_option (id (. o id)))
+      (check list_options (expect (= (len result) 0))))
+
+    (case rejects_empty_label
+      (fail add_option (label "")))
+
+    (case multiple_votes_increment_exactly_one
+      (do add_option (label "Dogs") (as o))
+      (do vote (id (. o id)) (expect (= (. result votes) 1)))
+      (do vote (id (. o id)) (expect (= (. result votes) 2)))
+      (do vote (id (. o id)) (expect (= (. result votes) 3))))))

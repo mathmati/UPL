@@ -1,0 +1,67 @@
+(upl 0.1
+  (intent "An inventory counter. Items have a name and a quantity that starts at zero. Buttons increment and decrement an item's quantity, and quantity can never drop below zero. Items can be deleted.")
+
+  (schema
+    (entity Item
+      (field id (id) (auto))
+      (field name (text) (require (and (>= (len name) 1) (<= (len name) 100))))
+      (field quantity (int) (default 0) (require (>= quantity 0)))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action create_item
+      (input (name text))
+      (requires (and (>= (len name) 1) (<= (len name) 100)))
+      (effect (insert Item (name name)))
+      (ensures (= (. result name) name)))
+
+    (action increment_item
+      (input (id id))
+      (effect (update Item id (quantity (+ (. current quantity) 1))))
+      (ensures (= (. result quantity) (+ (. current quantity) 1))))
+
+    (action decrement_item
+      (input (id id))
+      (effect (update Item id (quantity (- (. current quantity) 1))))
+      (ensures (= (. result quantity) (- (. current quantity) 1))))
+
+    (action delete_item
+      (input (id id))
+      (effect (delete Item id)))
+
+    (query list_items
+      (from Item)
+      (order-by created_at desc)))
+
+  (ui
+    (page home "/"
+      (heading "Inventory")
+      (form
+        (action create_item)
+        (field name (label "Item name")))
+      (list
+        (query list_items)
+        (item
+          (text name)
+          (text quantity)
+          (button (label "+") (action increment_item (id id)))
+          (button (label "-") (action decrement_item (id id)))
+          (button (label "Delete") (action delete_item (id id)))))))
+
+  (tests
+    (case lifecycle
+      (do create_item (name "Widget") (as w)
+        (expect (= (. result name) "Widget"))
+        (expect (= (. result quantity) 0)))
+      (do increment_item (id (. w id)) (expect (= (. result quantity) 1)))
+      (do increment_item (id (. w id)) (expect (= (. result quantity) 2)))
+      (do decrement_item (id (. w id)) (expect (= (. result quantity) 1)))
+      (check list_items (expect (= (len result) 1)))
+      (do delete_item (id (. w id)))
+      (check list_items (expect (= (len result) 0))))
+    (case rejects_decrement_at_zero
+      (do create_item (name "Gadget") (as g)
+        (expect (= (. result quantity) 0)))
+      (fail decrement_item (id (. g id))))
+    (case rejects_empty_name
+      (fail create_item (name "")))))

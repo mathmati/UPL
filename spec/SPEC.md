@@ -148,8 +148,11 @@ Steps:
   case.
 - `(fail action (input value)...)` — assert the action is rejected by a
   contract (requires / field require). Success fails the case.
-- `(check query (expect expr)...)` — run a query; `result` is the row
-  list (`(len result)` counts it).
+- `(check query part...)` — run a query. Parts are processed in order:
+  `(expect expr)` (where `result` is the row list; `(len result)` counts
+  it) and `(row N (as name))`, which binds the N-th row (0-based, in
+  query order) for later expects and steps — the mechanism for
+  asserting ordering. An out-of-range index fails the case.
 
 All names (actions, queries, inputs, bindings) are resolved at compile
 time; input lists must be covered exactly.

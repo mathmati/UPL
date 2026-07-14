@@ -111,8 +111,17 @@ def _run_step(module, step, env, result: CaseResult, i: int):
         fn = getattr(module, f"query_{step.query}")
         rows = fn()
         check_env = dict(env, result=rows)
-        for expr, src in step.expects:
-            if not _eval(expr, check_env, src):
-                result.failures.append(f"step {i}: expect failed: {src} (result = {len(rows)} rows)")
+        for part in step.parts:
+            if part[0] == "expect":
+                _, expr, src = part
+                if not _eval(expr, check_env, src):
+                    result.failures.append(f"step {i}: expect failed: {src} (result = {len(rows)} rows)")
+            else:  # ("row", index, bind_name)
+                _, index, bind_name = part
+                if index >= len(rows):
+                    result.failures.append(f"step {i}: (row {index} ...) out of range: query returned {len(rows)} rows")
+                    return
+                env[bind_name] = rows[index]
+                check_env[bind_name] = rows[index]
     else:
         raise AssertionError(step)

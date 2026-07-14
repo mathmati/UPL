@@ -101,6 +101,25 @@ class TestBundleTests(unittest.TestCase):
         self.assertFalse(case.ok)
         self.assertIn("expected a contract rejection", case.failures[0])
 
+    def test_row_binding_asserts_ordering(self):
+        results = self.run_bundle(read_example())
+        newest = next(r for r in results if r.name == "newest_first")
+        self.assertTrue(newest.ok, newest.failures)
+
+    def test_row_binding_wrong_order_fails(self):
+        bad = read_example().replace('(expect (= (. top title) "newer"))', '(expect (= (. top title) "older"))')
+        results = self.run_bundle(bad)
+        newest = next(r for r in results if r.name == "newest_first")
+        self.assertFalse(newest.ok)
+        self.assertIn("expect failed", newest.failures[0])
+
+    def test_row_binding_out_of_range_fails(self):
+        bad = read_example().replace("(row 0 (as top))", "(row 9 (as top))")
+        results = self.run_bundle(bad)
+        newest = next(r for r in results if r.name == "newest_first")
+        self.assertFalse(newest.ok)
+        self.assertIn("out of range", newest.failures[0])
+
     def test_unknown_action_in_case_is_compile_error(self):
         bad = read_example().replace("(do toggle_task (id (. t id)) (expect (= (. result done) true)))", "(do missing_action (id (. t id)))")
         with self.assertRaises(BundleError) as ctx:

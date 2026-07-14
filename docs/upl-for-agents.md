@@ -47,9 +47,12 @@ Rules:
 - Types: `id`, `text`, `int`, `bool`, `timestamp`. The type goes in parens: `(text)`.
 - Every entity needs **exactly one** `(field id (id) (auto))`.
 - `(auto)`: runtime-generated (only `id` and `timestamp`). `(default literal)`:
-  used when an insert doesn't assign the field. A field can't have both.
+  used when an insert doesn't assign the field. A field can't have both, but
+  `(default ...)` and `(require ...)` combine fine:
+  `(field quantity (int) (default 0) (require (>= quantity 0)))`.
 - `(require expr)`: an invariant checked on insert/update. It may reference
-  **only the field's own name** (bound to the candidate value).
+  **only the field's own name** (bound to the candidate value). Works for any
+  type — text length checks and numeric bounds alike.
 - v0.1 has **no relations** between entities. Model within one entity, or use
   multiple independent entities.
 
@@ -79,6 +82,8 @@ Rules:
 Rules:
 - An action has **exactly one effect**: `(insert Entity (field expr)...)`,
   `(update Entity id-expr (field expr)...)`, or `(delete Entity id-expr)`.
+- `requires` and `ensures` may each appear **multiple times**; every clause
+  must hold. `(ensures (and a b))` and two separate `ensures` are equivalent.
 - Insert must assign every field that is not `(auto)` and has no `(default)`.
   Never assign `(auto)` fields.
 - Expression contexts: `requires` sees inputs. Insert exprs see inputs.
@@ -88,8 +93,16 @@ Rules:
   `(. result title)`. Bare names are inputs (or, in `where`/field `require`,
   the row's own fields).
 - Queries: one `(from Entity)`, optional `(where expr)` over bare field names,
-  optional `(order-by field asc|desc)`.
+  optional `(order-by field asc|desc)`. `order-by` works on any field type
+  (text sorts lexicographically, so alphabetical listings are fine).
 - Counters/increments work via update: `(update Counter id (n (+ (. current n) 1)))`.
+- **Where to put a contract:** a field `(require ...)` is the invariant — it
+  rejects bad values on *every* write path (insert and update), which is the
+  only way to guard computed updates like a decrement (the guard
+  `(require (>= quantity 0))` rejects decrementing past zero). An action
+  `requires` only sees inputs (never `current`), so use it for input
+  validation; duplicating a field invariant there is optional and purely for
+  a clearer error message.
 
 Operators: `= != < <= > >= and or not len + - *`. `len` works on text (and on
 `result` in test `check` steps, where result is the row list). There is no
@@ -132,7 +145,14 @@ Rules:
     (do delete_task (id (. t id)))
     (check list_tasks (expect (= (len result) 0))))
   (case rejects_empty
-    (fail create_task (title ""))))
+    (fail create_task (title "")))
+  (case newest_first
+    (do create_task (title "older"))
+    (do create_task (title "newer"))
+    (check list_tasks
+      (expect (= (len result) 2))
+      (row 0 (as top))
+      (expect (= (. top title) "newer")))))
 ```
 
 Rules:
@@ -141,9 +161,13 @@ Rules:
   `(as t)` binds the result row; later steps reference it as `(. t field)`.
   `expect` sees `result` (this step's row) plus earlier bindings.
 - `(fail action (input value)...)` — asserts the action is **rejected by a
-  contract** (requires / field require). If it succeeds, the case fails.
-- `(check query (expect expr)...)` — runs a query; `result` is the row list,
-  so use `(len result)`. You cannot index into the list.
+  contract** (an action `requires` or a field `require` — both count).
+  If it succeeds, the case fails.
+- `(check query part...)` — runs a query; parts are processed in order:
+  - `(expect expr)` — `result` is the row list; `(len result)` counts it.
+  - `(row N (as name))` — binds the N-th row (0-based, in query order) for
+    later expects and steps: this is how you assert ordering, as in the
+    `newest_first` case above. Out-of-range N fails the case.
 - Input values are literals or `(. binding field)`. Write at least 3 cases:
   a happy-path lifecycle, a contract rejection, and one more specific to the app.
 

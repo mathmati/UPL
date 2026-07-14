@@ -150,7 +150,7 @@ class StepFail:
 @dataclass
 class StepCheck:
     query: str
-    expects: list  # [(expr, src)]
+    parts: list  # ordered: ("expect", expr, src) | ("row", index, bind_name)
 
 
 @dataclass
@@ -479,14 +479,26 @@ def _load_case(node) -> TestCase:
         elif kind == "check":
             _expect(len(s) >= 2, path, "(check query (expect expr)...) needs a query name")
             query = _sym(s[1], path, "query")
-            expects = []
+            parts = []
             for part in s[2:]:
-                _expect(isinstance(part, list) and len(part) == 2 and part[0] == Sym("expect"), path, f"check only takes (expect expr): {dumps(part)}")
-                try:
-                    expects.append((E.parse_expr(part[1]), E.to_source(part[1])))
-                except E.ExprError as err:
-                    raise BundleError(path, str(err))
-            steps.append(StepCheck(query=query, expects=expects))
+                _expect(isinstance(part, list) and part and isinstance(part[0], Sym), path, f"bad check part {dumps(part)}")
+                key = str(part[0])
+                if key == "expect":
+                    _expect(len(part) == 2, path, f"(expect expr) takes one expression: {dumps(part)}")
+                    try:
+                        parts.append(("expect", E.parse_expr(part[1]), E.to_source(part[1])))
+                    except E.ExprError as err:
+                        raise BundleError(path, str(err))
+                elif key == "row":
+                    _expect(
+                        len(part) == 3 and isinstance(part[1], int) and not isinstance(part[1], bool) and part[1] >= 0
+                        and isinstance(part[2], list) and len(part[2]) == 2 and part[2][0] == Sym("as"),
+                        path, f"row binding must be (row N (as name)) with N >= 0: {dumps(part)}",
+                    )
+                    parts.append(("row", part[1], _sym(part[2][1], path, "row binding name")))
+                else:
+                    raise BundleError(path, f"check only takes (expect expr) and (row N (as name)): {dumps(part)}")
+            steps.append(StepCheck(query=query, parts=parts))
         else:
             raise BundleError(path, f"unknown step '{kind}' (allowed: do, fail, check)")
     return TestCase(name=name, steps=steps)
@@ -617,9 +629,16 @@ def _validate(app: App):
             else:  # StepCheck
                 query = app.query(step.query)
                 _expect(query is not None, cpath, f"unknown query '{step.query}'")
-                for expr, src in step.expects:
-                    bad = E.free_names(expr) - bound - {"result"}
-                    _expect(not bad, cpath, f"expect references unbound names: {', '.join(sorted(bad))} in {src}")
+                for part in step.parts:
+                    if part[0] == "expect":
+                        _, expr, src = part
+                        bad = E.free_names(expr) - bound - {"result"}
+                        _expect(not bad, cpath, f"expect references unbound names: {', '.join(sorted(bad))} in {src}")
+                    else:  # row binding
+                        _, _index, bind_name = part
+                        _expect(bind_name not in ("result", "current"), cpath, "binding may not be named 'result' or 'current'")
+                        _expect(bind_name not in bound, cpath, f"binding '{bind_name}' already used")
+                        bound.add(bind_name)
 
     _expect(app.pages, "ui", "at least one page is required")
     seen_routes = set()

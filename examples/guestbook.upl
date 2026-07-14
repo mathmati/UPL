@@ -1,0 +1,48 @@
+(upl 0.1
+  (intent "A guestbook where visitors leave an entry with their name and a message; entries are listed newest first, with no editing or deleting.")
+
+  (schema
+    (entity Entry
+      (field id (id) (auto))
+      (field name (text) (require (and (>= (len name) 1) (<= (len name) 50))))
+      (field message (text) (require (and (>= (len message) 1) (<= (len message) 500))))
+      (field created_at (timestamp) (auto))))
+
+  (workflow
+    (action create_entry
+      (input (name text) (message text))
+      (requires (and (>= (len name) 1) (<= (len name) 50) (>= (len message) 1) (<= (len message) 500)))
+      (effect (insert Entry (name name) (message message)))
+      (ensures (and (= (. result name) name) (= (. result message) message))))
+
+    (query list_entries
+      (from Entry)
+      (order-by created_at desc)))
+
+  (ui
+    (page home "/"
+      (heading "Guestbook")
+      (form
+        (action create_entry)
+        (field name (label "Your name"))
+        (field message (label "Your message")))
+      (list
+        (query list_entries)
+        (item
+          (text name)
+          (text message)))))
+
+  (tests
+    (case lifecycle
+      (do create_entry (name "Alice") (message "Hello, this is my first visit!") (as e1)
+        (expect (= (. result name) "Alice"))
+        (expect (= (. result message) "Hello, this is my first visit!")))
+      (check list_entries (expect (= (len result) 1))))
+
+    (case rejects_empty_name
+      (fail create_entry (name "") (message "Some message")))
+
+    (case multiple_entries
+      (do create_entry (name "Bob") (message "Second visitor here") (as e2))
+      (do create_entry (name "Carol") (message "Third visitor here") (as e3))
+      (check list_entries (expect (= (len result) 2))))))

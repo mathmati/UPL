@@ -1,0 +1,79 @@
+(upl 0.1
+  (intent "A habit tracker: users create habits with a name, mark them done with a Did it button that increments a streak counter, reset the streak to zero, delete habits, and see all habits listed with the highest streak first.")
+
+  (schema
+    (entity Habit
+      (field id (id) (auto))
+      (field name (text) (require (and (>= (len name) 1) (<= (len name) 60))))
+      (field streak (int) (require (>= streak 0)) (default 0))))
+
+  (workflow
+    (action create_habit
+      (input (name text))
+      (requires (and (>= (len name) 1) (<= (len name) 60)))
+      (effect (insert Habit (name name) (streak 0)))
+      (ensures (and (= (. result name) name) (= (. result streak) 0))))
+
+    (action did_it
+      (input (id id))
+      (effect (update Habit id (streak (+ (. current streak) 1))))
+      (ensures (= (. result streak) (+ (. current streak) 1))))
+
+    (action reset_habit
+      (input (id id))
+      (effect (update Habit id (streak 0)))
+      (ensures (= (. result streak) 0)))
+
+    (action delete_habit
+      (input (id id))
+      (effect (delete Habit id)))
+
+    (query list_habits
+      (from Habit)
+      (order-by streak desc)))
+
+  (ui
+    (page home "/"
+      (heading "Habits")
+      (form
+        (action create_habit)
+        (field name (label "New habit")))
+      (list
+        (query list_habits)
+        (item
+          (text name)
+          (text streak)
+          (button (label "Did it") (action did_it (id id)))
+          (button (label "Reset") (action reset_habit (id id)))
+          (button (label "Delete") (action delete_habit (id id)))))))
+
+  (tests
+    (case lifecycle
+      (do create_habit (name "Exercise") (as h)
+        (expect (= (. result name) "Exercise"))
+        (expect (= (. result streak) 0)))
+      (do did_it (id (. h id)) (expect (= (. result streak) 1)))
+      (do did_it (id (. h id)) (expect (= (. result streak) 2)))
+      (do reset_habit (id (. h id)) (expect (= (. result streak) 0)))
+      (check list_habits (expect (= (len result) 1)))
+      (do delete_habit (id (. h id)))
+      (check list_habits (expect (= (len result) 0))))
+
+    (case rejects_empty_name
+      (fail create_habit (name "")))
+
+    (case rejects_too_long_name
+      (fail create_habit (name "This habit name is definitely far too long to be allowed by the sixty character limit")))
+
+    (case multiple_habits_streak_independent
+      (do create_habit (name "Read") (as a)
+        (expect (= (. result streak) 0)))
+      (do create_habit (name "Meditate") (as b)
+        (expect (= (. result streak) 0)))
+      (do did_it (id (. a id)) (expect (= (. result streak) 1)))
+      (do did_it (id (. a id)) (expect (= (. result streak) 2)))
+      (do did_it (id (. a id)) (expect (= (. result streak) 3)))
+      (do did_it (id (. b id)) (expect (= (. result streak) 1)))
+      (check list_habits (expect (= (len result) 2)))
+      (do delete_habit (id (. b id)))
+      (check list_habits (expect (= (len result) 1))))))
