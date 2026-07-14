@@ -105,6 +105,7 @@ class Query:
     where: object = None  # parsed expr or None
     where_src: str = ""
     order_by: object = None  # (field, "asc"|"desc") or None
+    page_size: int = 0  # (page-size N): offset pagination; 0 = unpaginated
     allows: list = dc_field(default_factory=list)  # [Allow]; OR semantics; no "owner" kind
 
 
@@ -117,6 +118,7 @@ class Heading:
 class FormField:
     name: str
     label: str
+    from_field: str = ""  # (from row-field): prefill from the enclosing row (list-item forms)
 
 
 @dataclass
@@ -468,7 +470,7 @@ def _load_query(node) -> Query:
     _expect(len(node) >= 2, path, "query needs a name")
     name = _sym(node[1], path, "query name")
     path = f"query {name}"
-    sections = _sections(node[2:], path, ["allow", "input", "from", "where", "order-by"])
+    sections = _sections(node[2:], path, ["allow", "input", "from", "where", "order-by", "page-size"])
     _expect("from" in sections and len(sections["from"]) == 1 and len(sections["from"][0]) == 2, path, "query needs exactly one (from Entity)")
     q = Query(name=name, entity=_sym(sections["from"][0][1], path, "entity"))
     for inp in sections.get("input", []):
@@ -489,6 +491,10 @@ def _load_query(node) -> Query:
         ob = sections["order-by"][0]
         _expect(len(ob) == 3 and str(ob[2]) in ("asc", "desc"), path, "(order-by field asc|desc)")
         q.order_by = (_sym(ob[1], path, "order-by field"), str(ob[2]))
+    if "page-size" in sections:
+        ps = sections["page-size"][0]
+        _expect(len(ps) == 2 and isinstance(ps[1], int) and not isinstance(ps[1], bool) and ps[1] >= 1, path, "(page-size N) takes a positive integer")
+        q.page_size = ps[1]
     q.allows = [_load_allow(a, path) for a in sections.get("allow", [])]
     return q
 
@@ -515,10 +521,17 @@ def _load_component(node, path):
             _expect(len(f) >= 2, path, "form field needs a name")
             fname = _sym(f[1], path, "form field name")
             label = fname
+            from_field = ""
             for opt in f[2:]:
-                _expect(isinstance(opt, list) and len(opt) == 2 and opt[0] == Sym("label"), path, f"bad form field option {dumps(opt)}")
-                label = _str(opt[1], path, "label")
-            fields.append(FormField(name=fname, label=label))
+                _expect(isinstance(opt, list) and len(opt) == 2 and isinstance(opt[0], Sym), path, f"bad form field option {dumps(opt)}")
+                key = str(opt[0])
+                if key == "label":
+                    label = _str(opt[1], path, "label")
+                elif key == "from":
+                    from_field = _sym(opt[1], path, "from row-field")
+                else:
+                    raise BundleError(path, f"unknown form field option '{key}' (allowed: label, from)")
+            fields.append(FormField(name=fname, label=label, from_field=from_field))
         binds = []
         for b in sections.get("bind", []):
             _expect(len(b) == 3 and isinstance(b[1], Sym) and isinstance(b[2], Sym), path, f"bind must be (bind input row-field): {dumps(b)}")
@@ -942,6 +955,9 @@ def _validate_component(app: App, c, ppath: str, row_fields=None):
         for f in c.fields:
             _expect(f.name in inames, ppath, f"form field '{f.name}' is not an input of action '{c.action}'")
             _expect(f.name not in covered, ppath, f"form covers input '{f.name}' twice")
+            if f.from_field:
+                _expect(row_fields is not None, ppath, f"(from ...) on field '{f.name}' is only allowed on forms inside a list (item ...)")
+                _expect(f.from_field in row_fields, ppath, f"field '{f.name}' prefills (from {f.from_field}) but the row has no such field")
             covered.add(f.name)
         for input_name, row_field in c.binds:
             _expect(row_fields is not None, ppath, "(bind ...) is only allowed on forms inside a list (item ...)")

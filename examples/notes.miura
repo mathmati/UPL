@@ -1,0 +1,59 @@
+; Miura bundle — notes with pagination and inline edit (v0.7).
+; Demonstrates (page-size N) and edit-forms prefilled with (from row-field).
+(miura 0.1
+  (intent "A notes app. Anyone can add a note (title required), edit its title and body inline, or delete it. Notes are listed newest first, two per page with a 'Load more' control.")
+  (schema
+    (entity Note
+      (field id (id) (auto))
+      (field title (text) (require (and (>= (len title) 1) (<= (len title) 120))))
+      (field body (text) (default ""))
+      (field created_at (timestamp) (auto))))
+  (workflow
+    (action add_note
+      (input (title text))
+      (requires (>= (len title) 1))
+      (effect (insert Note (title title)))
+      (ensures (= (. result title) title)))
+    (action edit_note
+      (input (id id) (title text) (body text))
+      (requires (>= (len title) 1))
+      (effect (update Note id (title title) (body body)))
+      (ensures (= (. result title) title)))
+    (action delete_note
+      (input (id id))
+      (effect (delete Note id)))
+    (query recent
+      (from Note)
+      (order-by created_at desc)
+      (page-size 2)))
+  (ui
+    (page home "/"
+      (heading "Notes")
+      (form
+        (action add_note)
+        (field title (label "New note")))
+      (list
+        (query recent)
+        (item
+          (text title)
+          (form
+            (action edit_note)
+            (bind id id)
+            (field title (label "Title") (from title))
+            (field body (label "Body") (from body)))
+          (button (label "Delete") (action delete_note (id id)))))))
+  (tests
+    (case add_edit_delete
+      (do add_note (title "first") (as n)
+        (expect (= (. result title) "first")))
+      (do edit_note (id (. n id)) (title "first edited") (body "more")
+        (expect (= (. result title) "first edited")))
+      (do delete_note (id (. n id)))
+      (check recent (expect (= (len result) 0))))
+    (case rejects_empty_title
+      (fail add_note (title "")))
+    (case page_size_caps_results
+      (do add_note (title "a"))
+      (do add_note (title "b"))
+      (do add_note (title "c"))
+      (check recent (expect (= (len result) 2))))))

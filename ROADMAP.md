@@ -59,10 +59,35 @@ the target tier.
 - **v0.4** — auth/permissions + `(unique)` ✓ shipped
 - **v0.5** — migrations ✓ shipped (`miurac migrate`, deterministic diff + apply)
 - **v0.6** — transactions + aggregates ✓ shipped (outbox deferred)
-- **v0.7** — UI completeness (edit forms, detail views, pagination)
-- **v0.8** — `fuzz` + `diff` tooling; agent-guide refresh + authoring
-  experiments for each new dialect (the proven loop: agents author from
-  the guide alone; their failures amend the language)
+- **v0.7** — UI completeness ✓ shipped: `(page-size N)` pagination + "Load
+  more" UI, and edit-form prefill `(field x (from row-field))`. Detail
+  views (dynamic routes) deferred to keep scope tight.
+- **v0.8** — target the empirical LLM/vibe-code failure modes, from two
+  failure-mode research reports ([research/failure-modes-security.md](research/failure-modes-security.md),
+  [research/failure-modes-correctness.md](research/failure-modes-correctness.md)).
+  Prioritized, evidence-backed:
+  1. **Enums + state-dependent `requires`** (roadmap 5a) — illegal-transition
+     bugs are a top workflow-correctness class; the most-requested primitive
+     (tic-tac-toe is inexpressible today because `requires` can't read state).
+  2. **Keyset pagination + SQL predicate/LIMIT push-down** — the query engine
+     currently fetches whole tables into Python and filters there (the
+     "works at 50 rows, dies at 50k" cliff). Upgrade under the existing
+     `(page-size N)` surface to keyset/seek (no offset drift) with SQL
+     push-down. *(v0.7 shipped offset pagination as the UI feature; this is
+     the correctness engine beneath it.)*
+  3. **Catch-all error boundary + structured logging** — today only 3
+     exception types are caught and request logging is disabled; unhandled
+     exceptions leak/500 with no trail. Generic message + request id to the
+     client, full detail to server logs. (Both reports flag this.)
+  4. **Ownership-check linter (BOLA)** — `miurac check` flags any mutation on
+     an owned entity lacking an owner/role `allow`; BOLA/IDOR is the most
+     common, most damaging category in every study surveyed.
+  5. **CSRF + auth rate-limiting** — pure server codegen on compiler-owned
+     endpoints, zero bundle syntax.
+  6. **Idempotency keys** — dedupe client-retried actions (double-charge/
+     double-book) on the transaction machinery already shipped.
+  Plus `fuzz` + `diff` tooling and an authoring experiment per new dialect.
+  Rate-limiting/field-visibility/outbox/N+1-batching queued behind these.
 - **v1.0** — hardening + docs + the decisive experiment below
 
 ## v1 success criterion (falsifiable) — first result in

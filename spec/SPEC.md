@@ -151,6 +151,12 @@ update/delete only), and is checked *before* commit. An action returns
 Query input names must not collide with the entity's field names.
 A parameterized query is served as `GET /api/<name>?<input>=<value>`.
 
+`(page-size N)` (positive integer) paginates: the query returns at most N
+rows and the endpoint accepts `?offset=M`. The generated list UI renders a
+"Load more" control. (v0.7 uses offset pagination; keyset pagination and
+SQL predicate push-down are planned — see ROADMAP.) In `check` steps a
+paginated query returns only its first page.
+
 ### Expressions
 
 ```
@@ -177,10 +183,12 @@ or `ensures`. Inside a transaction they observe uncommitted state.
 Components:
 
 - `(heading "text")`
-- `(form (action name) (field input-name (label "text"))... (bind input-name row-field)...)`
+- `(form (action name) (field input-name (label "text") (from row-field)?)... (bind input-name row-field)...)`
   — fields and binds together must cover all of the action's inputs.
-  `bind` fills an input invisibly from the enclosing row, so it is only
-  allowed on forms inside a list item.
+  `bind` fills an input invisibly from the enclosing row; a field's
+  optional `(from row-field)` prefills a *visible* input from the row (the
+  inline-edit pattern). Both `bind` and `from` are only allowed on forms
+  inside a list item.
 - `(list (query name (query-input row-field)...) (item item-component...))`
   — query args are required exactly when the query is parameterized,
   and only allowed inside a list item (they pull from the parent row).

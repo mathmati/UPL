@@ -61,3 +61,24 @@ closer review pass. Not user-facing; delete entries once reviewed.
     steps are ordered first so a failure leaves additions applied and
     destructions not-yet-run, but this isn't a single atomic transaction.
     Worth deciding whether to wrap the whole apply in BEGIN/COMMIT.
+
+## v0.7 — pagination + edit prefill (model.py, emit_python.py, emit_web.py)
+
+- `(page-size N)` on queries + `(field x (from row-field))` prefill on
+  list-item forms. Both verified end-to-end (HTTP pagination slices;
+  browser prefill shows current value + "Save" button).
+- **Honest limitation flagged by the correctness research (which read the
+  emitter source):** pagination is implemented as OFFSET slicing in Python
+  after a full-table fetch. Two consequences: (a) offset can drift under
+  concurrent inserts/deletes (a row seen twice or skipped across pages);
+  (b) it caps the *response size* but not server work — the full table is
+  still scanned. The `(page-size N)` bundle SURFACE is forward-compatible:
+  v0.8 should upgrade the implementation to KEYSET/seek pagination with SQL
+  predicate + LIMIT push-down (the emitter already sorts by `(field, id)`,
+  so keyset is nearly free) WITHOUT changing any bundle. Prioritized in the
+  ROADMAP v0.8 list. Do not advertise pagination as solving the perf cliff
+  until that lands.
+- Also surfaced by the research and queued for v0.8: only 3 exception types
+  are caught in generated servers and `log_message` is disabled → no
+  observability + potential internal leakage on unexpected errors. This is
+  a real current gap (error-boundary + structured logging).

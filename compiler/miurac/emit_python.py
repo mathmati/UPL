@@ -239,7 +239,7 @@ def _emit_query(app: App, query) -> list:
     else:
         sql += " ORDER BY id ASC"
     intent_inputs = ", ".join(f"{n} {t}" for n, t in query.inputs)
-    lines = [f"def query_{query.name}(inp, ctx):"]
+    lines = [f"def query_{query.name}(inp, ctx, offset=0):"]
     doc = f"Miura query {query.name} over {query.entity}"
     lines.append(f'    """{doc}{" (inputs: " + intent_inputs + ")" if intent_inputs else ""}."""')
     _emit_allow_checks(lines, query.allows, query.name)
@@ -255,8 +255,9 @@ def _emit_query(app: App, query) -> list:
         for iname, _ in query.inputs:
             names[iname] = f"inp[{iname!r}]"
         cond = E.to_python(query.where, names, _agg_resolver(app))
-        lines.append("    _aggconn = None")  # filtering runs post-close; aggregates open their own conn
         lines.append(f"    rows = [row for row in rows if {cond}]")
+    if query.page_size:
+        lines.append(f"    rows = rows[offset:offset + {query.page_size}]")
     lines.append("    return rows")
     return lines
 
@@ -533,12 +534,16 @@ def emit_python(app: App, header: str) -> str:
     out.append("            fn, input_spec = QUERIES[name]")
     out.append("            try:")
     out.append("                params = dict(urllib.parse.parse_qsl(query_string))")
+    out.append("                try:")
+    out.append("                    offset = max(0, int(params.get('offset', 0)))")
+    out.append("                except ValueError:")
+    out.append("                    raise ContractViolation('offset must be an integer')")
     out.append("                inp = {}")
     out.append("                for iname, coerce in input_spec:")
     out.append("                    if iname not in params:")
     out.append("                        raise ContractViolation('missing query param: ' + iname)")
     out.append("                    inp[iname] = coerce(iname, params[iname])")
-    out.append("                self._send_json(200, fn(inp, ctx))")
+    out.append("                self._send_json(200, fn(inp, ctx, offset))")
     out.append("            except PermissionDenied as err:")
     out.append("                self._send_denied(ctx, err)")
     out.append("            except ContractViolation as err:")

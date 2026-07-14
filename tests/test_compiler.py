@@ -256,6 +256,74 @@ class TestTransactionsAndAggregates(unittest.TestCase):
         self.assert_error(bad, "single-effect")
 
 
+class TestV07(unittest.TestCase):
+    BASE = """(miura 0.1
+  (intent "notes")
+  (schema (entity Note
+    (field id (id) (auto))
+    (field title (text) (require (>= (len title) 1)))
+    (field body (text) (default ""))
+    (field created_at (timestamp) (auto))))
+  (workflow
+    (action add_note (input (title text)) (effect (insert Note (title title))))
+    (action edit_note (input (id id) (title text)) (effect (update Note id (title title))))
+    (query recent (from Note) (order-by created_at desc) (page-size 2)))
+  (ui (page home "/"
+    (heading "Notes")
+    (form (action add_note) (field title (label "Title")))
+    (list (query recent) (item
+      (text title)
+      (form (action edit_note) (bind id id) (field title (from title))))))))
+"""
+
+    def test_page_size_loads(self):
+        app = load(self.BASE)
+        self.assertEqual(app.query("recent").page_size, 2)
+
+    def test_page_size_must_be_positive(self):
+        with self.assertRaises(BundleError) as ctx:
+            load(self.BASE.replace("(page-size 2)", "(page-size 0)"))
+        self.assertIn("positive integer", str(ctx.exception))
+
+    def test_prefill_loads(self):
+        app = load(self.BASE)
+        form = app.pages[0].components[2].item[1]
+        self.assertEqual(form.fields[0].from_field, "title")
+
+    def test_prefill_only_in_list_item(self):
+        bad = self.BASE.replace(
+            "(form (action add_note) (field title (label \"Title\")))",
+            "(form (action add_note) (field title (from title)))")
+        with self.assertRaises(BundleError) as ctx:
+            load(bad)
+        self.assertIn("only allowed on forms inside a list", str(ctx.exception))
+
+    def test_prefill_unknown_row_field(self):
+        bad = self.BASE.replace("(field title (from title))", "(field title (from ghost))")
+        with self.assertRaises(BundleError) as ctx:
+            load(bad)
+        self.assertIn("row has no such field", str(ctx.exception))
+
+    def test_pagination_slices_at_runtime(self):
+        from miurac.emit_python import emit_python
+        import types as _t
+        src = emit_python(load(self.BASE), "test")
+        mod = _t.ModuleType("pag")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["MIURA_DB"] = os.path.join(tmp, "p.db")
+            mod.__dict__["__file__"] = os.path.join(tmp, "app.py")
+            exec(compile(src, "pag", "exec"), mod.__dict__)
+            mod.init_db()
+            for i in range(5):
+                mod.action_add_note({"title": f"n{i}"}, {"user": None})
+            page0 = mod.query_recent({}, {"user": None}, 0)
+            page1 = mod.query_recent({}, {"user": None}, 2)
+            self.assertEqual(len(page0), 2)
+            self.assertEqual(len(page1), 2)
+            self.assertEqual(len(mod.query_recent({}, {"user": None}, 4)), 1)
+            self.assertNotEqual([r["id"] for r in page0], [r["id"] for r in page1])
+
+
 class TestUnpack(unittest.TestCase):
     def unpack(self, out_dir):
         env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "compiler"))

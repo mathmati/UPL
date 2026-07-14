@@ -18,7 +18,7 @@ def _component_json(c):
     if isinstance(c, Form):
         return {
             "kind": "form", "action": c.action,
-            "fields": [{"name": f.name, "label": f.label} for f in c.fields],
+            "fields": [{"name": f.name, "label": f.label, "from": f.from_field} for f in c.fields],
             "binds": [{"input": a, "from": b} for a, b in c.binds],
         }
     if isinstance(c, List):
@@ -38,12 +38,14 @@ def _component_json(c):
 
 def _ui_model(app: App) -> dict:
     input_types = {a.name: {n: t for n, t in a.inputs} for a in app.actions}
+    page_sizes = {q.name: q.page_size for q in app.queries if q.page_size}
     return {
         "pages": [
             {"name": p.name, "route": p.route, "components": [_component_json(c) for c in p.components]}
             for p in app.pages
         ],
         "inputTypes": input_types,
+        "pageSizes": page_sizes,
         "auth": bool(app.auth),
     }
 
@@ -64,6 +66,7 @@ button { padding: 0.4rem 0.8rem; font-size: 0.95rem; cursor: pointer; }
 .miura-nested { margin-left: 1.2rem; }
 .miura-subheading { font-size: 1rem; margin: 0.3rem 0 0; }
 #miura-error { color: #b3261e; min-height: 1.4em; font-size: 0.9rem; }
+.miura-more { align-self: flex-start; margin-top: 0.4rem; }
 #miura-auth { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; margin-bottom: 0.5rem; font-size: 0.9rem; }
 #miura-auth form { display: flex; gap: 0.4rem; margin: 0; }
 #miura-auth input { padding: 0.3rem 0.5rem; }
@@ -118,15 +121,34 @@ function actionArgs(args, row) {
   return out;
 }
 
+function queryUrl(c, row, offset) {
+  const parts = [];
+  if (c.args) for (const a of c.args) parts.push(encodeURIComponent(a.input) + '=' + encodeURIComponent(row[a.from]));
+  if (offset) parts.push('offset=' + offset);
+  return '/api/' + c.query + (parts.length ? '?' + parts.join('&') : '');
+}
+
 async function renderList(c, el, row) {
-  let url = '/api/' + c.query;
-  if (c.args && c.args.length) {
-    url += '?' + c.args.map((a) => encodeURIComponent(a.input) + '=' + encodeURIComponent(row[a.from])).join('&');
-  }
-  const rows = await api(url);
+  const pageSize = UI_MODEL.pageSizes[c.query] || 0;
+  const rows = await api(queryUrl(c, row, 0));
   const items = [];
   for (const r of rows) items.push(await renderItem(c.item, r));
   el.replaceChildren(...items);
+  if (pageSize && rows.length === pageSize) {
+    const more = document.createElement('button');
+    more.className = 'miura-more';
+    more.textContent = 'Load more';
+    let offset = pageSize;
+    more.addEventListener('click', async () => {
+      try {
+        const next = await api(queryUrl(c, row, offset));
+        for (const r of next) el.insertBefore(await renderItem(c.item, r), more);
+        offset += next.length;
+        if (!pageSize || next.length < pageSize) more.remove();
+      } catch (err) { showError(err.message); }
+    });
+    el.appendChild(more);
+  }
 }
 
 async function renderItem(components, row) {
@@ -175,6 +197,7 @@ async function renderItem(components, row) {
 function buildForm(c, row) {
   const form = document.createElement('form');
   const types = UI_MODEL.inputTypes[c.action] || {};
+  let prefilled = false;
   for (const f of c.fields) {
     const label = document.createElement('label');
     label.append(f.label);
@@ -182,12 +205,17 @@ function buildForm(c, row) {
     const t = types[f.name] || 'text';
     input.type = t === 'int' ? 'number' : t === 'bool' ? 'checkbox' : 'text';
     input.name = f.name;
+    if (f.from && row) {
+      prefilled = true;
+      if (t === 'bool') input.checked = Boolean(row[f.from]);
+      else input.value = row[f.from];
+    }
     label.appendChild(input);
     form.appendChild(label);
   }
   const submit = document.createElement('button');
   submit.type = 'submit';
-  submit.textContent = 'Add';
+  submit.textContent = prefilled ? 'Save' : 'Add';
   form.appendChild(submit);
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();

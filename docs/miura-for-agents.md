@@ -163,6 +163,10 @@ Rules:
   (text sorts lexicographically, so alphabetical listings are fine).
 - In auth apps, `@user` works in a query `where` exactly as in actions:
   `(query my_tasks (allow signed-in) (from Task) (where (= owner @user)))`.
+- **Pagination**: add `(page-size N)` to a query and it returns at most N
+  rows; the generated list UI shows a "Load more" control that fetches the
+  next page. Use this on any list that can grow large. In tests, `check`
+  sees only the first page (so `(len result)` is at most N).
 - **Parameterized queries**: a query may declare `(input (name type)...)` and
   use those names in its `where` — this is how you scope rows to a parent,
   e.g. "comments for one post":
@@ -236,6 +240,11 @@ Rules:
     `(list (query comments_for_post (post_id id)) (item (text text)))` —
     the `(post_id id)` pair maps the query input `post_id` from the row's
     `id` field, and must cover all the query's inputs.
+  - **Edit forms**: a form field can be prefilled from the current row with
+    `(field title (label "Title") (from title))` — the input starts with
+    the row's `title` value, so the user edits rather than retypes. This is
+    the inline-edit pattern; combine with `(bind id id)` to target the row.
+    `(from ...)` is only allowed on forms inside a list item.
 - Labels are strings; everything else is symbols.
 
 ## tests — acceptance cases (always include these)
