@@ -153,6 +153,29 @@ class TestUnpack(unittest.TestCase):
                 with open(pa, "rb") as fa, open(pb, "rb") as fb:
                     self.assertEqual(fa.read(), fb.read(), f"nondeterministic output: {rel}")
 
+    def test_verify_detects_drift(self):
+        env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "compiler"))
+
+        def verify(out_dir):
+            return subprocess.run(
+                [sys.executable, "-m", "uplc", "verify", EXAMPLE, "-o", out_dir],
+                capture_output=True, env=env, cwd=ROOT, text=True,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.unpack(tmp)
+            self.assertEqual(verify(tmp).returncode, 0)
+            app_py = os.path.join(tmp, "server", "app.py")
+            with open(app_py, "a", encoding="utf-8") as fh:
+                fh.write("\n# hotfix nobody told the bundle about\n")
+            result = verify(tmp)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("DRIFTED", result.stdout)
+            os.remove(app_py)
+            result = verify(tmp)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("MISSING", result.stdout)
+
     def test_generated_python_compiles(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.unpack(tmp)

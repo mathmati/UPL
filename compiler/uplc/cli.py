@@ -85,22 +85,46 @@ def cmd_test(args) -> int:
     return 1 if failed else 0
 
 
-def cmd_unpack(args) -> int:
-    app = _load_file(args.bundle)
-    header = _header(app, args.bundle)
-    out = args.out
-    targets = {
+def _targets(app, header: str, out: str) -> dict:
+    return {
         os.path.join(out, "server", "app.py"): emit_python(app, header),
         os.path.join(out, "web", "index.html"): emit_web(app, header),
         os.path.join(out, "db", "schema.sql"): emit_sql(app, header),
     }
+
+
+def cmd_verify(args) -> int:
+    """Detect drift: do the on-disk artifacts match what this bundle generates?"""
+    app = _load_file(args.bundle)
+    header = _header(app, args.bundle)
+    statuses = {}
+    for path, expected in _targets(app, header, args.out).items():
+        if not os.path.exists(path):
+            statuses[path] = "missing"
+        else:
+            with open(path, "r", encoding="utf-8") as fh:
+                statuses[path] = "ok" if fh.read() == expected else "drifted"
+    clean = all(s == "ok" for s in statuses.values())
+    if args.json:
+        print(json.dumps({"ok": clean, "bundle_sha256": app.bundle_hash, "targets": statuses}))
+    else:
+        for path, status in statuses.items():
+            print(f"{status.upper():8s}{path}")
+        print("build matches bundle" if clean else "DRIFT: regenerate with uplc unpack, or lift the manual edits back into the bundle")
+    return 0 if clean else 1
+
+
+def cmd_unpack(args) -> int:
+    app = _load_file(args.bundle)
+    header = _header(app, args.bundle)
+    targets = _targets(app, header, args.out)
     for path, content in targets.items():
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(content)
         print(f"wrote {path}")
     print(f"bundle sha256: {app.bundle_hash}")
-    print(f"run: python {os.path.join(out, 'server', 'app.py')}")
+    print(f"run: python {os.path.join(args.out, 'server', 'app.py')}")
     return 0
 
 
@@ -127,6 +151,12 @@ def main(argv=None) -> int:
     p_unpack.add_argument("bundle")
     p_unpack.add_argument("-o", "--out", default="build", help="output directory (default: build)")
     p_unpack.set_defaults(fn=cmd_unpack, json=False)
+
+    p_verify = sub.add_parser("verify", help="check that on-disk artifacts match what the bundle generates (drift detection)")
+    p_verify.add_argument("bundle")
+    p_verify.add_argument("-o", "--out", default="build", help="build directory to verify (default: build)")
+    p_verify.add_argument("--json", action="store_true", help="machine-readable output")
+    p_verify.set_defaults(fn=cmd_verify)
 
     args = parser.parse_args(argv)
     try:

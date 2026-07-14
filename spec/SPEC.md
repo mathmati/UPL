@@ -181,6 +181,7 @@ Environment: `UPL_PORT` (default 8000), `UPL_DB` (default
 | `uplc fmt bundle [--write]` | canonical form |
 | `uplc test bundle [--json]` | run the bundle's `(tests ...)` cases against its unpacked app |
 | `uplc unpack bundle -o dir` | write server/web/db targets |
+| `uplc verify bundle -o dir [--json]` | drift detection: exit 1 if on-disk artifacts don't match what the bundle generates |
 
 ## Not in v0.1 (deliberately)
 
