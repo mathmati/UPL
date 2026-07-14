@@ -1,0 +1,90 @@
+; Miura bundle — a money ledger exercising v0.6:
+; multi-effect transactional actions (atomic transfer) and aggregates.
+(miura 0.1
+  (intent "A simple money ledger. Accounts hold a whole-cent balance that can never go negative. Deposits add funds; a transfer moves funds from one account to another atomically — either both sides happen or neither does, so an overdrawing transfer leaves both accounts untouched. Balances are always conserved by a transfer, and the ledger reports its total.")
+  (schema
+    (entity Account
+      (field id (id) (auto))
+      (field name (text) (unique) (require (and (>= (len name) 1) (<= (len name) 60))))
+      (field balance (int) (default 0) (require (>= balance 0)))
+      (field created_at (timestamp) (auto))))
+  (workflow
+    (action open_account
+      (input (name text))
+      (requires (< (count Account) 1000))
+      (effect (insert Account (name name)))
+      (ensures (= (. result balance) 0)))
+    (action deposit
+      (input (id id) (amount int))
+      (requires (> amount 0))
+      (effect (update Account id (balance (+ (. current balance) amount))))
+      (ensures (= (. result balance) (+ (. current balance) amount))))
+    (action transfer
+      (input (from_id id) (to_id id) (amount int))
+      (requires (> amount 0))
+      (requires (!= from_id to_id))
+      (effect (update Account from_id (balance (- (. current balance) amount))) (was from_before) (as from_after))
+      (effect (update Account to_id (balance (+ (. current balance) amount))) (was to_before) (as to_after))
+      (ensures (= (. from_after balance) (- (. from_before balance) amount)))
+      (ensures (= (. to_after balance) (+ (. to_before balance) amount)))
+      (ensures (= (+ (. from_after balance) (. to_after balance)) (+ (. from_before balance) (. to_before balance)))))
+    (query list_accounts
+      (from Account)
+      (order-by balance desc))
+    (query solvent_accounts
+      (from Account)
+      (where (> balance 0))
+      (order-by balance desc)))
+  (ui
+    (page home "/"
+      (heading "Ledger")
+      (form
+        (action open_account)
+        (field name (label "Account name")))
+      (heading "Accounts")
+      (list
+        (query list_accounts)
+        (item
+          (text name)
+          (text balance)))))
+  (tests
+    (case transfer_is_atomic_and_conservative
+      (do open_account (name "alice") (as a) (expect (= (. result balance) 0)))
+      (do open_account (name "bob") (as b))
+      (do deposit (id (. a id)) (amount 100) (expect (= (. result balance) 100)))
+      (do transfer (from_id (. a id)) (to_id (. b id)) (amount 30)
+        (expect (= (. result balance) 30)))
+      (check (solvent_accounts) (expect (= (len result) 2)))
+      (check list_accounts
+        (expect (= (sum Account balance) 100))
+        (row 0 (as top))
+        (expect (= (. top name) "alice"))
+        (expect (= (. top balance) 70))))
+    (case overdraw_rolls_back_both_sides
+      (do open_account (name "carol") (as c))
+      (do open_account (name "dave") (as d))
+      (do deposit (id (. c id)) (amount 50))
+      (fail transfer (from_id (. c id)) (to_id (. d id)) (amount 999))
+      ; the debit was rolled back with the credit: totals untouched
+      (check list_accounts (expect (= (sum Account balance) 50)))
+      (check (solvent_accounts)
+        (expect (= (len result) 1))
+        (row 0 (as only))
+        (expect (= (. only name) "carol"))
+        (expect (= (. only balance) 50))))
+    (case first_write_undone_when_second_effect_fails
+      ; the debit executes, then the credit fails on a missing account;
+      ; the whole transaction rolls back, so the debit is undone too.
+      (do open_account (name "frank") (as f))
+      (do deposit (id (. f id)) (amount 40))
+      (fail transfer (from_id (. f id)) (to_id "ghost-account") (amount 10))
+      (check list_accounts
+        (expect (= (sum Account balance) 40))
+        (row 0 (as only))
+        (expect (= (. only balance) 40))))
+    (case guards_reject_bad_transfers
+      (do open_account (name "erin") (as e))
+      (do deposit (id (. e id)) (amount 10))
+      (fail transfer (from_id (. e id)) (to_id (. e id)) (amount 5))
+      (fail deposit (id (. e id)) (amount 0))
+      (fail open_account (name "erin")))))

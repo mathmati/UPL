@@ -35,6 +35,14 @@ class Call:
     args: tuple
 
 
+@dataclass(frozen=True)
+class Agg:
+    kind: str  # "count" | "sum"
+    entity: str
+    field: str  # sum only, else ""
+    pred: object  # Expr or None (None = all rows)
+
+
 # op -> (min_arity, max_arity or None for variadic)
 OPS = {
     "=": (2, 2),
@@ -68,6 +76,14 @@ def parse_expr(node):
             if len(node) != 3 or not isinstance(node[1], Sym) or not isinstance(node[2], Sym):
                 raise ExprError(f"field access must be (. row field): {dumps(node)}")
             return FieldRef(str(node[1]), str(node[2]))
+        if head == "count":
+            if len(node) not in (2, 3) or not isinstance(node[1], Sym):
+                raise ExprError(f"count must be (count Entity pred?): {dumps(node)}")
+            return Agg("count", str(node[1]), "", parse_expr(node[2]) if len(node) == 3 else None)
+        if head == "sum":
+            if len(node) not in (3, 4) or not isinstance(node[1], Sym) or not isinstance(node[2], Sym):
+                raise ExprError(f"sum must be (sum Entity field pred?): {dumps(node)}")
+            return Agg("sum", str(node[1]), str(node[2]), parse_expr(node[3]) if len(node) == 4 else None)
         if head not in OPS:
             raise ExprError(f"unknown operator '{head}' in {dumps(node)}")
         lo, hi = OPS[str(head)]
@@ -79,8 +95,10 @@ def parse_expr(node):
 
 
 def free_names(expr) -> set:
-    """All Ref names and FieldRef base names used by the expression."""
-    if isinstance(expr, Lit):
+    """All Ref names and FieldRef base names used by the expression.
+    Aggregate predicates are scoped separately (see aggregates()/model
+    validation) and contribute nothing here."""
+    if isinstance(expr, Lit) or isinstance(expr, Agg):
         return set()
     if isinstance(expr, Ref):
         return {expr.name}
@@ -92,6 +110,18 @@ def free_names(expr) -> set:
             out |= free_names(a)
         return out
     raise AssertionError(expr)
+
+
+def aggregates(expr) -> list:
+    """All Agg nodes in the expression (not recursing into their preds)."""
+    if isinstance(expr, Agg):
+        return [expr]
+    if isinstance(expr, Call):
+        out = []
+        for a in expr.args:
+            out += aggregates(a)
+        return out
+    return []
 
 
 def field_refs(expr) -> set:
@@ -109,12 +139,14 @@ def field_refs(expr) -> set:
 _PY_BINOPS = {"=": "==", "!=": "!=", "<": "<", "<=": "<=", ">": ">", ">=": ">=", "+": "+", "-": "-", "*": "*"}
 
 
-def to_python(expr, names: dict) -> str:
+def to_python(expr, names: dict, agg_resolver=None) -> str:
     """Compile to a Python expression string.
 
-    `names` maps a UPL name to the Python expression that yields it,
+    `names` maps a Miura name to the Python expression that yields it,
     e.g. {"title": 'inp["title"]', "current": "current"}. FieldRef
-    bases must map to a dict-valued Python expression."""
+    bases must map to a dict-valued Python expression. `agg_resolver`
+    (entity name -> (table, field-name set)) enables (count ...)/(sum ...)
+    in contexts that permit them."""
     if isinstance(expr, Lit):
         return repr(expr.value)
     if isinstance(expr, Ref):
@@ -125,8 +157,20 @@ def to_python(expr, names: dict) -> str:
         if expr.base not in names:
             raise ExprError(f"unbound row '{expr.base}'")
         return f'{names[expr.base]}[{expr.field!r}]'
+    if isinstance(expr, Agg):
+        if agg_resolver is None:
+            raise ExprError("aggregates are not allowed in this context")
+        table, fields = agg_resolver(expr.entity)
+        # inside the predicate, bare names resolve to the aggregated
+        # entity's fields first; outer names remain reachable otherwise
+        pred_names = {k: v for k, v in names.items() if k not in fields}
+        pred_names.update({f: f"_r[{f!r}]" for f in fields})
+        pred = to_python(expr.pred, pred_names, agg_resolver) if expr.pred is not None else "True"
+        if expr.kind == "count":
+            return f"_agg_count(_aggconn, {table!r}, lambda _r: {pred})"
+        return f"_agg_sum(_aggconn, {table!r}, {expr.field!r}, lambda _r: {pred})"
     if isinstance(expr, Call):
-        args = [to_python(a, names) for a in expr.args]
+        args = [to_python(a, names, agg_resolver) for a in expr.args]
         if expr.op in _PY_BINOPS:
             return "(" + f" {_PY_BINOPS[expr.op]} ".join(args) + ")"
         if expr.op in ("and", "or"):

@@ -185,6 +185,77 @@ class TestAuth(unittest.TestCase):
         self.assertIn("unique constraint violated", case.failures[0])
 
 
+LEDGER_EXAMPLE = os.path.join(ROOT, "examples", "ledger.miura")
+
+
+def read_ledger():
+    with open(LEDGER_EXAMPLE, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+class TestTransactionsAndAggregates(unittest.TestCase):
+    def assert_error(self, text, fragment):
+        with self.assertRaises(BundleError) as ctx:
+            load(text)
+        self.assertIn(fragment, str(ctx.exception))
+
+    def test_ledger_loads_and_passes(self):
+        from miurac.runner import run_tests
+        app = load(read_ledger())
+        transfer = app.action("transfer")
+        self.assertEqual(len(transfer.effects), 2)
+        results = run_tests(app)
+        self.assertTrue(all(r.ok for r in results), [(r.name, r.failures) for r in results])
+
+    def test_multi_effect_atomic_rollback(self):
+        # An ensures failure on a two-effect action must roll back the first write.
+        from miurac.runner import run_tests
+        bad = read_ledger().replace(
+            "(ensures (= (. to_after balance) (+ (. to_before balance) amount)))",
+            "(ensures (= (. to_after balance) 999999))",  # impossible -> always rolls back
+        )
+        results = run_tests(load(bad))
+        # the atomic-transfer case does a transfer, which now always fails ensures;
+        # the (do transfer ...) step should report an ensures violation, not corrupt state
+        case = next(r for r in results if r.name == "transfer_is_atomic_and_conservative")
+        self.assertFalse(case.ok)
+        self.assertIn("ensures", case.failures[0].lower())
+
+    def test_effect_binding_scopes_to_later_effects(self):
+        bad = read_ledger().replace("(. from_before balance)", "(. nonexistent balance)")
+        self.assert_error(bad, "ensures references unbound names: nonexistent")
+
+    def test_was_binding_rejected_on_insert(self):
+        bad = read_ledger().replace(
+            "(effect (insert Account (name name)))",
+            "(effect (insert Account (name name)) (was ghost))",
+        )
+        self.assert_error(bad, "(was name) applies to update/delete")
+
+    def test_count_aggregate_scopes_entity(self):
+        bad = read_ledger().replace("(requires (< (count Account) 1000))", "(requires (< (count Nope) 1000))")
+        self.assert_error(bad, "aggregate over unknown entity 'Nope'")
+
+    def test_sum_requires_int_field(self):
+        bad = read_ledger().replace("(sum Account balance)", "(sum Account name)")
+        self.assert_error(bad, "must exist and be (int)")
+
+    def test_aggregate_rejected_in_effect_expr(self):
+        bad = read_ledger().replace(
+            "(effect (update Account id (balance (+ (. current balance) amount))))",
+            "(effect (update Account id (balance (count Account))))",
+        )
+        self.assert_error(bad, "aggregates")
+
+    def test_owner_rule_rejected_on_multi_effect(self):
+        # craft a two-effect action with an owner allow -> should be rejected
+        bad = read_auth_example().replace(
+            "(action toggle_task\n      (allow (owner owner))",
+            "(action toggle_task\n      (allow (owner owner))\n      (effect (update Task id (done true)))",
+        )
+        self.assert_error(bad, "single-effect")
+
+
 class TestUnpack(unittest.TestCase):
     def unpack(self, out_dir):
         env = dict(os.environ, PYTHONPATH=os.path.join(ROOT, "compiler"))

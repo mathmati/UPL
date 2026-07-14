@@ -53,10 +53,11 @@ capable LLM with a paragraph describing your app.
 | [`spec/SPEC.md`](spec/SPEC.md) | Miura language specification |
 | [`compiler/miurac/`](compiler/miurac/) | The compiler: reader/canonical printer, expression language, validator, bundle test runner, and deterministic emitters (Python, web, SQL) |
 | [`docs/miura-for-agents.md`](docs/miura-for-agents.md) | The authoring guide an LLM writes Miura from (spec-in-context) |
-| [`examples/`](examples/) | Five app bundles — four of them written by AI agents that had never seen the language |
+| [`examples/`](examples/) | Nine app bundles — most written by AI agents that had never seen the language, incl. `ledger.miura` (atomic transfers) and `team-tasks.miura` (auth) |
 | [`experiments/`](experiments/) | Empirical results on AI authorship |
-| [`tests/`](tests/) | Compiler tests + end-to-end runtime tests |
-| [`research/`](research/) | The four research reports that scoped the design |
+| [`tests/`](tests/) | Compiler tests + end-to-end runtime tests (44) |
+| [`ROADMAP.md`](ROADMAP.md) · [`REVIEW-NOTES.md`](REVIEW-NOTES.md) | Path to v1; per-release review notes |
+| [`research/`](research/) | The research reports that scoped the design, plus novelty/value audits |
 
 ## Does the core bet hold? First evidence: yes
 

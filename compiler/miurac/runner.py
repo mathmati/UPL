@@ -14,6 +14,7 @@ import tempfile
 
 from . import expr as E
 from .emit_python import emit_python
+from .emit_sql import table_name
 from .model import App, StepCheck, StepDo, StepFail, StepUser
 
 
@@ -41,11 +42,15 @@ def _load_module(app: App, workdir: str):
     return module, db_path
 
 
-def _eval(expr, env: dict, src: str):
+def _eval(expr, env: dict, src: str, module=None, agg=None):
     names = {name: f"env[{name!r}]" for name in env}
-    code = E.to_python(expr, names)
+    code = E.to_python(expr, names, agg)
+    glb = {"__builtins__": {}, "len": len}
+    if module is not None:  # aggregates in expects read committed state via fresh conns
+        glb["_agg_count"] = module._agg_count
+        glb["_agg_sum"] = module._agg_sum
     try:
-        return eval(code, {"__builtins__": {}, "len": len}, {"env": env})
+        return eval(code, glb, {"env": env, "_aggconn": None})
     except Exception as err:  # surface as a test failure, not a crash
         raise _EvalError(f"error evaluating {src}: {err}")
 
@@ -57,8 +62,13 @@ class _EvalError(Exception):
 def run_tests(app: App):
     """Run all cases; returns [CaseResult]."""
     results = []
-    with tempfile.TemporaryDirectory(prefix="uplc-test-") as workdir:
+    with tempfile.TemporaryDirectory(prefix="miurac-test-") as workdir:
         module, db_path = _load_module(app, workdir)
+
+        def agg(entity_name):
+            e = app.entity(entity_name)
+            return (table_name(e.name), {f.name for f in e.fields})
+
         for case in app.tests:
             result = CaseResult(case.name)
             results.append(result)
@@ -68,7 +78,7 @@ def run_tests(app: App):
             env = {}
             for i, step in enumerate(case.steps, 1):
                 try:
-                    _run_step(module, step, env, result, i)
+                    _run_step(module, step, env, result, i, agg)
                 except _EvalError as err:
                     result.failures.append(f"step {i}: {err}")
                 if result.failures:
@@ -84,7 +94,7 @@ def _step_ctx(step, env):
     return {"user": env[step.by]} if getattr(step, "by", "") else {"user": None}
 
 
-def _run_step(module, step, env, result: CaseResult, i: int):
+def _run_step(module, step, env, result: CaseResult, i: int, agg=None):
     if isinstance(step, StepUser):
         user = module.auth_create_user(f"{step.name}@test.example", "password-for-tests", role=step.role)
         env[step.name] = user
@@ -103,7 +113,7 @@ def _run_step(module, step, env, result: CaseResult, i: int):
             return
         check_env = dict(env, result=row)
         for expr, src in step.expects:
-            if not _eval(expr, check_env, src):
+            if not _eval(expr, check_env, src, module, agg):
                 result.failures.append(f"step {i}: expect failed: {src} (result = {row!r})")
         if step.bind:
             env[step.bind] = row
@@ -129,7 +139,7 @@ def _run_step(module, step, env, result: CaseResult, i: int):
         for part in step.parts:
             if part[0] == "expect":
                 _, expr, src = part
-                if not _eval(expr, check_env, src):
+                if not _eval(expr, check_env, src, module, agg):
                     result.failures.append(f"step {i}: expect failed: {src} (result = {len(rows)} rows)")
             else:  # ("row", index, bind_name)
                 _, index, bind_name = part

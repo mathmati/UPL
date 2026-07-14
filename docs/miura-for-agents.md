@@ -129,10 +129,27 @@ Rules:
 ```
 
 Rules:
-- An action has **exactly one effect**: `(insert Entity (field expr)...)`,
+- An effect is `(insert Entity (field expr)...)`,
   `(update Entity id-expr (field expr)...)`, or `(delete Entity id-expr)`.
 - `requires` and `ensures` may each appear **multiple times**; every clause
   must hold. `(ensures (and a b))` and two separate `ensures` are equivalent.
+- **Transactions (multiple effects).** An action may have **more than one
+  `(effect ...)`. They all run in a single transaction — either every
+  effect commits or none does.** If any contract fails (a `requires`, a
+  field `require`, an `ensures`, a missing id), the whole action rolls
+  back, so a half-finished transfer can never persist. Use this for
+  anything that must move together (debit one row, credit another).
+- **Effect bindings.** Name an effect's rows so later effects and `ensures`
+  can read them:
+  - `(effect (update Account from_id (balance ...)) (was before) (as after))`
+    — `(was before)` binds the row *before* the update, `(as after)` binds
+    it *after*. `(was)` works on update/delete; `(as)` on insert/update.
+  - Later effects' expressions and all `ensures` can reference these
+    bindings: `(ensures (= (. after balance) (- (. before balance) amount)))`.
+- **What `ensures` sees:** the inputs, every `(as ...)`/`(was ...)` binding,
+  plus `result` (the last effect's resulting row) and `current` (the last
+  effect's pre-image, for update/delete). With multiple effects, prefer the
+  explicit bindings — they're unambiguous.
 - Insert must assign every field that is not `(auto)` and has no `(default)`.
   Never assign `(auto)` fields.
 - Expression contexts: `requires` sees inputs. Insert exprs see inputs.
@@ -172,6 +189,18 @@ Rules:
 Operators: `= != < <= > >= and or not len + - *`. `len` works on text (and on
 `result` in test `check` steps, where result is the row list). There is no
 division, no string concatenation, no if/else.
+
+**Aggregates** count or sum across an entity's rows:
+
+- `(count Entity)` or `(count Entity pred)` — number of rows (matching pred).
+- `(sum Entity int-field)` or `(sum Entity int-field pred)` — sum of an
+  `(int)` field over matching rows.
+- Inside the predicate, bare names are the aggregated entity's own fields:
+  `(count Booking (= event event_id))`, `(sum Ledger amount (= account @user))`.
+- Allowed **only** in action `requires`, query `where`, and test `expect`
+  steps — the read-only contexts. Not in effects, field `require`, or
+  `ensures` of a mutation's own written rows. Use them for capacity limits
+  (`(requires (< (count Seat) 100))`) and balance invariants.
 
 ## ui — pages and components
 
@@ -291,6 +320,11 @@ Rules:
 14. Forgetting that with `(auth ...)` present everything defaults to
     `(allow signed-in)` — public pages need `(allow anyone)` on their
     queries explicitly.
+15. Referencing an `(as name)` binding within the *same* effect that
+    defines it — bindings are visible to *later* effects and to `ensures`,
+    not to their own effect.
+16. Putting an aggregate in an `ensures`, effect, or field `require` —
+    they belong only in `requires`, `where`, and test `expect`.
 
 ## Style
 

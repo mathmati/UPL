@@ -68,6 +68,7 @@ class Auth:
 class Insert:
     entity: str
     assigns: list  # [(field, expr, src)]
+    bind_as: str = ""  # (as name): the inserted row, visible to later effects/ensures
 
 
 @dataclass
@@ -75,12 +76,15 @@ class Update:
     entity: str
     id_expr: object
     assigns: list  # [(field, expr, src)]
+    bind_as: str = ""  # (as name): the row after the update
+    bind_was: str = ""  # (was name): the row before the update
 
 
 @dataclass
 class Delete:
     entity: str
     id_expr: object
+    bind_was: str = ""  # (was name): the row before deletion
 
 
 @dataclass
@@ -88,8 +92,8 @@ class Action:
     name: str
     inputs: list  # [(name, type)]
     requires: list  # [(expr, src)]
-    effect: object  # Insert | Update | Delete
-    ensures: list  # [(expr, src)]
+    effects: list  # [Insert | Update | Delete] — all run in ONE transaction
+    ensures: list  # [(expr, src)] — checked before commit; failure rolls back
     allows: list = dc_field(default_factory=list)  # [Allow]; OR semantics
 
 
@@ -394,7 +398,7 @@ def _load_action(node) -> Action:
     name = _sym(node[1], path, "action name")
     path = f"action {name}"
     sections = _sections(node[2:], path, ["allow", "input", "requires", "effect", "ensures"])
-    _expect("effect" in sections and len(sections["effect"]) == 1, path, "action needs exactly one (effect ...)")
+    _expect("effect" in sections, path, "action needs at least one (effect ...)")
 
     inputs = []
     for inp in sections.get("input", []):
@@ -418,32 +422,45 @@ def _load_action(node) -> Action:
     requires = _load_contracts("requires")
     ensures = _load_contracts("ensures")
 
-    eff = sections["effect"][0]
-    _expect(len(eff) == 2 and isinstance(eff[1], list) and eff[1] and isinstance(eff[1][0], Sym), path, "effect must be (effect (insert|update|delete ...))")
-    ef = eff[1]
-    kind = str(ef[0])
-    if kind == "insert":
-        _expect(len(ef) >= 2, path, "(insert Entity (field expr)...)")
-        effect = Insert(entity=_sym(ef[1], path, "entity"), assigns=_load_assigns(ef[2:], path))
-    elif kind == "update":
-        _expect(len(ef) >= 3, path, "(update Entity id-expr (field expr)...)")
-        try:
-            id_expr = E.parse_expr(ef[2])
-        except E.ExprError as err:
-            raise BundleError(path, str(err))
-        effect = Update(entity=_sym(ef[1], path, "entity"), id_expr=id_expr, assigns=_load_assigns(ef[3:], path))
-    elif kind == "delete":
-        _expect(len(ef) == 3, path, "(delete Entity id-expr)")
-        try:
-            id_expr = E.parse_expr(ef[2])
-        except E.ExprError as err:
-            raise BundleError(path, str(err))
-        effect = Delete(entity=_sym(ef[1], path, "entity"), id_expr=id_expr)
-    else:
-        raise BundleError(path, f"unknown effect '{kind}' (allowed: insert, update, delete)")
+    effects = []
+    for eff in sections["effect"]:
+        _expect(len(eff) >= 2 and isinstance(eff[1], list) and eff[1] and isinstance(eff[1][0], Sym), path, "effect must be (effect (insert|update|delete ...) (as name)? (was name)?)")
+        ef = eff[1]
+        kind = str(ef[0])
+        if kind == "insert":
+            _expect(len(ef) >= 2, path, "(insert Entity (field expr)...)")
+            effect = Insert(entity=_sym(ef[1], path, "entity"), assigns=_load_assigns(ef[2:], path))
+        elif kind == "update":
+            _expect(len(ef) >= 3, path, "(update Entity id-expr (field expr)...)")
+            try:
+                id_expr = E.parse_expr(ef[2])
+            except E.ExprError as err:
+                raise BundleError(path, str(err))
+            effect = Update(entity=_sym(ef[1], path, "entity"), id_expr=id_expr, assigns=_load_assigns(ef[3:], path))
+        elif kind == "delete":
+            _expect(len(ef) == 3, path, "(delete Entity id-expr)")
+            try:
+                id_expr = E.parse_expr(ef[2])
+            except E.ExprError as err:
+                raise BundleError(path, str(err))
+            effect = Delete(entity=_sym(ef[1], path, "entity"), id_expr=id_expr)
+        else:
+            raise BundleError(path, f"unknown effect '{kind}' (allowed: insert, update, delete)")
+        for opt in eff[2:]:
+            _expect(isinstance(opt, list) and len(opt) == 2 and isinstance(opt[0], Sym) and isinstance(opt[1], Sym), path, f"effect option must be (as name) or (was name): {dumps(opt)}")
+            key = str(opt[0])
+            if key == "as":
+                _expect(not isinstance(effect, Delete), path, "(as name) applies to insert/update effects (delete has no resulting row)")
+                effect.bind_as = str(opt[1])
+            elif key == "was":
+                _expect(isinstance(effect, (Update, Delete)), path, "(was name) applies to update/delete effects (insert has no prior row)")
+                effect.bind_was = str(opt[1])
+            else:
+                raise BundleError(path, f"unknown effect option '{key}'")
+        effects.append(effect)
 
     allows = [_load_allow(a, path) for a in sections.get("allow", [])]
-    return Action(name=name, inputs=inputs, requires=requires, effect=effect, ensures=ensures, allows=allows)
+    return Action(name=name, inputs=inputs, requires=requires, effects=effects, ensures=ensures, allows=allows)
 
 
 def _load_query(node) -> Query:
@@ -635,6 +652,23 @@ def _signed_in_guaranteed(allows) -> bool:
     return bool(allows) and all(a.kind != "anyone" for a in allows)
 
 
+def _check_aggregates(app, expr, outer_names, path, src, allowed):
+    """Validate (count ...)/(sum ...) nodes: context, entity, field, and
+    predicate scoping (bare names = the aggregated entity's fields first,
+    then outer names)."""
+    for agg in E.aggregates(expr):
+        _expect(allowed, path, f"aggregates ((count ...)/(sum ...)) are only allowed in action requires, query where, and test expects: {src}")
+        ent = app.entity(agg.entity)
+        _expect(agg.entity != "User" and ent is not None, path, f"aggregate over unknown entity '{agg.entity}' in {src}")
+        fields = {f.name: f for f in ent.fields}
+        if agg.kind == "sum":
+            _expect(agg.field in fields and fields[agg.field].type == "int", path, f"(sum {agg.entity} {agg.field} ...): field must exist and be (int)")
+        if agg.pred is not None:
+            _expect(not E.aggregates(agg.pred), path, f"aggregates cannot nest inside an aggregate predicate: {src}")
+            bad = E.free_names(agg.pred) - set(fields) - set(outer_names)
+            _expect(not bad, path, f"aggregate predicate references unknown names: {', '.join(sorted(bad))} in {src}")
+
+
 def _validate(app: App):
     _expect(app.entities, "schema", "at least one entity is required")
 
@@ -680,6 +714,7 @@ def _validate(app: App):
                 _expect(not f.auto, fpath, "(require) cannot apply to an (auto) field")
                 bad = E.free_names(f.require) - {f.name}
                 _expect(not bad, fpath, f"field require may only reference the field itself, found: {', '.join(sorted(bad))}")
+                _check_aggregates(app, f.require, {f.name}, fpath, f.require_src, allowed=False)
             if f.type == "ref":
                 _expect(not f.has_default, fpath, "(ref ...) fields cannot have a (default)")
                 _expect(not f.auto or f.auto_user, fpath, "(ref ...) fields cannot be (auto) — except (auto @user) on (ref User)")
@@ -724,6 +759,7 @@ def _validate(app: App):
             bad = E.free_names(q.where) - fnames - inames - auth_names
             _expect(not bad, qpath, f"where references unknown fields/inputs: {', '.join(sorted(bad))}"
                     + (" (@user needs a signed-in guarantee: no (allow anyone))" if "@user" in bad else ""))
+            _check_aggregates(app, q.where, fnames | inames | auth_names, qpath, q.where_src, allowed=True)
             _expect(not E.field_refs(q.where), qpath, "where uses bare field names, not (. row field)")
         else:
             _expect(not q.inputs, qpath, "query inputs require a (where ...) that uses them")
@@ -741,53 +777,77 @@ def _validate(app: App):
             inames.add(iname)
         _expect(not {"result", "current"} & inames, apath, "inputs may not be named 'result' or 'current'")
 
-        ent = app.entity(a.effect.entity)
-        _expect(ent is not None, apath, f"effect references unknown entity '{a.effect.entity}'")
-        fields = {f.name: f for f in ent.fields}
-        _check_allows(a.allows, apath, ent, a.effect)
+        primary = a.effects[0]
+        primary_ent = app.entity(primary.entity)
+        _expect(primary_ent is not None, apath, f"effect references unknown entity '{primary.entity}'")
+        _check_allows(a.allows, apath, primary_ent, primary)
+        if any(al.kind == "owner" for al in a.allows):
+            _expect(len(a.effects) == 1, apath, "(allow (owner ...)) only applies to single-effect actions")
         auth_names = {"@user"} if app.auth and _signed_in_guaranteed(a.allows) else set()
         inames = inames | auth_names
-
-        if isinstance(a.effect, Insert) and any(f.auto_user for f in ent.fields):
-            _expect(_signed_in_guaranteed(a.allows), apath, f"insert into {ent.name} fills an (auto @user) field, so the action needs a signed-in guarantee (no (allow anyone))")
 
         for expr, src in a.requires:
             bad = E.free_names(expr) - inames
             _expect(not bad, apath, f"requires references unbound names: {', '.join(sorted(bad))} in {src}")
+            _check_aggregates(app, expr, inames, apath, src, allowed=True)
 
-        def _check_assigns(assigns, allowed_names):
-            assigned = set()
-            for fname, expr, src in assigns:
-                _expect(fname in fields, apath, f"effect assigns unknown field '{fname}'")
-                _expect(not fields[fname].auto, apath, f"effect may not assign (auto) field '{fname}'")
-                _expect(fname not in assigned, apath, f"effect assigns field '{fname}' twice")
-                assigned.add(fname)
-                bad = E.free_names(expr) - allowed_names
-                _expect(not bad, apath, f"effect expr references unbound names: {', '.join(sorted(bad))} in {src}")
-            return assigned
+        bound_names = set()
+        row_entities = {}  # binding name -> entity (for field-ref checks)
+        for eff in a.effects:
+            ent = app.entity(eff.entity)
+            _expect(ent is not None, apath, f"effect references unknown entity '{eff.entity}'")
+            fields = {f.name: f for f in ent.fields}
+            scope = inames | bound_names
 
-        if isinstance(a.effect, Insert):
-            assigned = _check_assigns(a.effect.assigns, inames)
-            for f in ent.fields:
-                if not f.auto and not f.has_default:
-                    _expect(f.name in assigned, apath, f"insert must assign field '{f.name}' (no default)")
-            ensure_names = inames | {"result"}
-        elif isinstance(a.effect, Update):
-            bad = E.free_names(a.effect.id_expr) - inames
-            _expect(not bad, apath, f"update id expr references unbound names: {', '.join(sorted(bad))}")
-            _check_assigns(a.effect.assigns, inames | {"current"})
-            ensure_names = inames | {"result", "current"}
-        else:  # Delete
-            bad = E.free_names(a.effect.id_expr) - inames
-            _expect(not bad, apath, f"delete id expr references unbound names: {', '.join(sorted(bad))}")
-            ensure_names = inames | {"current"}
+            def _check_assigns(assigns, allowed_names):
+                assigned = set()
+                for fname, expr, src in assigns:
+                    _expect(fname in fields, apath, f"effect assigns unknown field '{fname}'")
+                    _expect(not fields[fname].auto, apath, f"effect may not assign (auto) field '{fname}'")
+                    _expect(fname not in assigned, apath, f"effect assigns field '{fname}' twice")
+                    assigned.add(fname)
+                    bad = E.free_names(expr) - allowed_names
+                    _expect(not bad, apath, f"effect expr references unbound names: {', '.join(sorted(bad))} in {src}")
+                    _check_aggregates(app, expr, allowed_names, apath, src, allowed=False)
+                return assigned
+
+            if isinstance(eff, Insert):
+                if any(f.auto_user for f in ent.fields):
+                    _expect(_signed_in_guaranteed(a.allows), apath, f"insert into {ent.name} fills an (auto @user) field, so the action needs a signed-in guarantee (no (allow anyone))")
+                assigned = _check_assigns(eff.assigns, scope)
+                for f in ent.fields:
+                    if not f.auto and not f.has_default:
+                        _expect(f.name in assigned, apath, f"insert must assign field '{f.name}' (no default)")
+            else:  # Update | Delete
+                bad = E.free_names(eff.id_expr) - scope
+                _expect(not bad, apath, f"effect id expr references unbound names: {', '.join(sorted(bad))}")
+                _check_aggregates(app, eff.id_expr, scope, apath, "effect id expr", allowed=False)
+                if isinstance(eff, Update):
+                    _check_assigns(eff.assigns, scope | {"current"})
+
+            for bname in (getattr(eff, "bind_was", ""), getattr(eff, "bind_as", "")):
+                if bname:
+                    _expect(bname not in ("result", "current", "@user") and bname not in inames and bname not in bound_names, apath, f"effect binding '{bname}' collides with another name")
+                    bound_names.add(bname)
+                    row_entities[bname] = ent
+
+        last = a.effects[-1]
+        last_ent = app.entity(last.entity)
+        ensure_names = inames | bound_names
+        if not isinstance(last, Delete):
+            ensure_names |= {"result"}
+            row_entities["result"] = last_ent
+        if isinstance(last, (Update, Delete)):
+            ensure_names |= {"current"}
+            row_entities["current"] = last_ent
 
         for expr, src in a.ensures:
             bad = E.free_names(expr) - ensure_names
             _expect(not bad, apath, f"ensures references unbound names: {', '.join(sorted(bad))} in {src}")
+            _check_aggregates(app, expr, ensure_names, apath, src, allowed=False)
             for base, fname in E.field_refs(expr):
-                if base in ("result", "current"):
-                    _expect(fname in fields, apath, f"ensures references unknown field (. {base} {fname})")
+                if base in row_entities:
+                    _expect(fname in {f.name for f in row_entities[base].fields}, apath, f"ensures references unknown field (. {base} {fname})")
 
     seen = set()
     for case in app.tests:
@@ -806,6 +866,7 @@ def _validate(app: App):
                 given.add(arg_name)
                 bad = E.free_names(value_expr) - bound
                 _expect(not bad, cpath, f"{what} value references unbound names: {', '.join(sorted(bad))} in {src}")
+                _check_aggregates(app, value_expr, bound, cpath, src, allowed=False)
             _expect(given == inames, cpath, f"{what} must supply all inputs of '{action.name}': missing {', '.join(sorted(inames - given))}")
 
         for step in case.steps:
@@ -827,6 +888,7 @@ def _validate(app: App):
                     for expr, src in step.expects:
                         bad = E.free_names(expr) - bound - {"result"}
                         _expect(not bad, cpath, f"expect references unbound names: {', '.join(sorted(bad))} in {src}")
+                        _check_aggregates(app, expr, bound | {"result"}, cpath, src, allowed=True)
                     if step.bind:
                         _expect(step.bind not in ("result", "current"), cpath, "binding may not be named 'result' or 'current'")
                         _expect(step.bind not in bound, cpath, f"binding '{step.bind}' already used")
@@ -850,6 +912,7 @@ def _validate(app: App):
                         _, expr, src = part
                         bad = E.free_names(expr) - bound - {"result"}
                         _expect(not bad, cpath, f"expect references unbound names: {', '.join(sorted(bad))} in {src}")
+                        _check_aggregates(app, expr, bound | {"result"}, cpath, src, allowed=True)
                     else:  # row binding
                         _, _index, bind_name = part
                         _expect(bind_name not in ("result", "current"), cpath, "binding may not be named 'result' or 'current'")

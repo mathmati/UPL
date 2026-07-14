@@ -56,9 +56,9 @@ the target tier.
 
 ## Version sequencing
 
-- **v0.4** — auth/permissions + `(unique)`
+- **v0.4** — auth/permissions + `(unique)` ✓ shipped
 - **v0.5** — migrations
-- **v0.6** — transactions, aggregates, outbox
+- **v0.6** — transactions + aggregates ✓ shipped (outbox deferred)
 - **v0.7** — UI completeness (edit forms, detail views, pagination)
 - **v0.8** — `fuzz` + `diff` tooling; agent-guide refresh + authoring
   experiments for each new dialect (the proven loop: agents author from

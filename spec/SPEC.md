@@ -108,27 +108,35 @@ rejections.
 
 ### workflow
 
-**Actions** mutate exactly one entity:
+**Actions** mutate one or more entities:
 
 ```
 (action name
   (input (name type)...)          ; optional
   (requires expr)...              ; optional, over inputs; 400 on failure
-  (effect <effect>)               ; required, exactly one
-  (ensures expr)...)              ; optional; 500 on failure
+  (effect <effect> (as n)? (was n)?)...  ; one or more; all in ONE transaction
+  (ensures expr)...)              ; optional; checked pre-commit, 500 + rollback
 ```
 
 Effects:
 
 - `(insert Entity (field expr)...)` — every non-auto field must be
-  assigned or have a default. Exprs see the inputs.
-- `(update Entity id-expr (field expr)...)` — exprs see the inputs and
-  `current` (the row before the update). Unknown id → 400.
+  assigned or have a default.
+- `(update Entity id-expr (field expr)...)` — exprs see `current` (the row
+  before this update) plus inputs and prior bindings. Unknown id → 400.
 - `(delete Entity id-expr)` — unknown id → 400.
 
-`ensures` sees the inputs, `result` (the row after insert/update), and
-`current` (update/delete only). An action returns `result` as JSON
-(`{"ok": true}` for delete).
+**Transactions.** Multiple `(effect ...)` run in a single transaction in
+order, with no intermediate commit; a `requires`/field-`require`/`ensures`
+failure or a missing id rolls the whole action back. An effect may bind its
+rows with `(as name)` (the resulting row of an insert/update) and
+`(was name)` (the pre-image of an update/delete); later effects and all
+`ensures` may reference those bindings. `ensures` also sees `result` (the
+last effect's resulting row) and `current` (the last effect's pre-image,
+update/delete only), and is checked *before* commit. An action returns
+`result` as JSON (`{"ok": true}` when the last effect is a delete).
+
+`(allow (owner field))` is restricted to single-effect actions.
 
 **Queries** read exactly one entity:
 
@@ -153,6 +161,12 @@ op   := = != < <= > >= and or not len + - *
 `(. row field)` reads a field of a bound row (`result`, `current`).
 Name resolution is validated at compile time; an unbound name is a
 compile error, never a runtime surprise.
+
+**Aggregates:** `(count Entity pred?)` and `(sum Entity int-field pred?)`
+compute over an entity's rows; inside `pred`, bare names are that entity's
+fields. Permitted only in action `requires`, query `where`, and test
+`expect` steps (read-only contexts) — never in effects, field `require`,
+or `ensures`. Inside a transaction they observe uncommitted state.
 
 ### ui
 
@@ -241,7 +255,7 @@ Environment: `MIURA_PORT` (default 8000), `MIURA_DB` (default
 
 ## Not yet in the language (deliberately)
 
-Auth/sessions, migrations (schema is create-if-not-exists only),
-pagination, aggregates (counts/sums in queries), client-side
-validation, the AI edit-lift tool, WASM target, SMT-checked contracts.
-Each is scoped in `research/03-building-it-now.md`.
+Migrations (schema is create-if-not-exists only), pagination,
+client-side validation, file uploads, custom styling, real-time, the
+AI edit-lift tool, WASM target, SMT-checked contracts. See
+[`../ROADMAP.md`](../ROADMAP.md).

@@ -64,13 +64,14 @@ def _emit_allow_checks(lines, allows, what):
     return owner_rules
 
 
-def _emit_owner_check(lines, owner_rules, allows, what):
-    """Emit the post-fetch owner check (inside the conn block, after
-    `current` exists). ORs the plain rules back in."""
+def _emit_owner_check(lines, owner_rules, allows, what, cur_var="current"):
+    """Emit the post-fetch owner check (inside the conn block, after the
+    current row exists). ORs the plain rules back in. Owner rules only
+    occur on single-effect actions (enforced by the validator)."""
     if not owner_rules:
         return
     conds = [_allow_cond(a) for a in allows if a.kind in ("signed-in", "role")]
-    conds += [f'current[{a.arg!r}] == ctx["user"]["id"]' for a in owner_rules]
+    conds += [f'{cur_var}[{a.arg!r}] == ctx["user"]["id"]' for a in owner_rules]
     lines.append(f"        if not ({' or '.join(conds)}):")
     lines.append(f"            raise PermissionDenied('not allowed: {what}')")
 
@@ -87,106 +88,140 @@ def _emit_field_requires(lines, entity, values_py: str, assigned=None):
         lines.append(f"        raise ContractViolation('field {entity.name}.{f.name} require failed: ' + {f.require_src!r})")
 
 
+def _agg_resolver(app):
+    def resolve(entity_name):
+        e = app.entity(entity_name)
+        return (table_name(e.name), {f.name for f in e.fields})
+    return resolve
+
+
 def _emit_action(app: App, action) -> list:
-    ent = app.entity(action.effect.entity)
-    table = table_name(ent.name)
     inames = _input_names(action)
+    agg = _agg_resolver(app)
     lines = [f"def action_{action.name}(inp, ctx):"]
     intent_inputs = ", ".join(f"{n} {t}" for n, t in action.inputs) or "none"
     lines.append(f'    """Miura action {action.name} (inputs: {intent_inputs})."""')
 
+    # Permission checks run before any DB work (may raise PermissionDenied).
     owner_rules = _emit_allow_checks(lines, action.allows, action.name)
-
-    for expr, src in action.requires:
-        cond = E.to_python(expr, inames)
-        lines.append(f"    if not {cond}:")
-        lines.append(f"        raise ContractViolation('requires failed: ' + {src!r})")
+    single = len(action.effects) == 1
 
     lines.append("    conn = _db()")
+    lines.append("    _aggconn = conn")  # aggregates in requires/ensures see this txn
     lines.append("    try:")
 
-    if isinstance(action.effect, Insert):
-        assigns = dict((f, e) for f, e, _ in action.effect.assigns)
-        row_items = []
-        for f in ent.fields:
-            if f.name in assigns:
-                value = E.to_python(assigns[f.name], inames)
-            elif f.auto_user:
-                value = 'ctx["user"]["id"]'
-            elif f.auto and f.type == "id":
-                value = "str(uuid.uuid4())"
-            elif f.auto and f.type == "timestamp":
-                value = "_now()"
-            else:
-                value = repr(f.default)
-            row_items.append(f"{f.name!r}: {value}")
-        lines.append("        row = {" + ", ".join(row_items) + "}")
-        _emit_field_requires_indented(lines, ent, "row")
-        _emit_ref_checks(lines, app, ent, "row")
-        cols = ", ".join(f.name for f in ent.fields)
-        marks = ", ".join("?" for _ in ent.fields)
-        params = ", ".join(f"row[{f.name!r}]" for f in ent.fields)
-        lines.append("        try:")
-        lines.append(f'            conn.execute("INSERT INTO {table} ({cols}) VALUES ({marks})", ({params},))')
-        lines.append("        except sqlite3.IntegrityError as err:")
-        lines.append("            raise ContractViolation('unique constraint violated: ' + str(err))")
-        lines.append("        conn.commit()")
-        lines.append(f'        result = conn.execute("SELECT * FROM {table} WHERE id = ?", (row["id"],)).fetchone()')
-    elif isinstance(action.effect, Update):
-        id_py = E.to_python(action.effect.id_expr, inames)
-        lines.append(f'        current = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
-        lines.append("        if current is None:")
-        lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
-        _emit_owner_check(lines, owner_rules, action.allows, action.name)
-        names = dict(inames)
-        names["current"] = "current"
-        assigned = set()
-        update_items = []
-        for fname, expr, _src in action.effect.assigns:
-            update_items.append(f"{fname!r}: {E.to_python(expr, names)}")
-            assigned.add(fname)
-        lines.append("        updates = {" + ", ".join(update_items) + "}")
-        _emit_field_requires_indented(lines, ent, "updates", assigned)
-        _emit_ref_checks(lines, app, ent, "updates", assigned)
-        set_clause = ", ".join(f"{fname} = ?" for fname, _, _ in action.effect.assigns)
-        set_params = ", ".join(f"updates[{fname!r}]" for fname, _, _ in action.effect.assigns)
-        lines.append("        try:")
-        lines.append(f'            conn.execute("UPDATE {table} SET {set_clause} WHERE id = ?", ({set_params}, {id_py}))')
-        lines.append("        except sqlite3.IntegrityError as err:")
-        lines.append("            raise ContractViolation('unique constraint violated: ' + str(err))")
-        lines.append("        conn.commit()")
-        lines.append(f'        result = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
-    else:  # Delete
-        id_py = E.to_python(action.effect.id_expr, inames)
-        lines.append(f'        current = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
-        lines.append("        if current is None:")
-        lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
-        _emit_owner_check(lines, owner_rules, action.allows, action.name)
-        ref_children = [(child, f) for child in app.entities for f in child.fields if f.type == "ref" and f.ref_entity == ent.name]
-        for child, f in ref_children:  # all restrict checks run before any cascade deletes
-            if f.on_delete == "restrict":
-                lines.append(f'        if conn.execute("SELECT 1 FROM {table_name(child.name)} WHERE {f.name} = ?", ({id_py},)).fetchone() is not None:')
-                lines.append(f"            raise ContractViolation('cannot delete {ent.name} ' + str({id_py}) + ': referenced by {child.name}.{f.name}')")
-        for child, f in ref_children:
-            if f.on_delete == "cascade":
-                lines.append(f'        conn.execute("DELETE FROM {table_name(child.name)} WHERE {f.name} = ?", ({id_py},))')
-        lines.append(f'        conn.execute("DELETE FROM {table} WHERE id = ?", ({id_py},))')
-        lines.append("        conn.commit()")
-        lines.append('        result = {"ok": True}')
+    # requires: preconditions over inputs; may read committed state via aggregates
+    for expr, src in action.requires:
+        cond = E.to_python(expr, inames, agg)
+        lines.append(f"        if not {cond}:")
+        lines.append(f"            raise ContractViolation('requires failed: ' + {src!r})")
 
+    # Effects run in order, no intermediate commit. Bindings from earlier
+    # effects (as/was) are visible to later effects and to ensures.
+    names = dict(inames)
+    last_result = None   # python expr for the row after the last insert/update
+    last_current = None  # python expr for the pre-image of the last update/delete
+
+    for i, eff in enumerate(action.effects):
+        ent = app.entity(eff.entity)
+        table = table_name(ent.name)
+        if isinstance(eff, Insert):
+            assigns = dict((f, e) for f, e, _ in eff.assigns)
+            row_items = []
+            for f in ent.fields:
+                if f.name in assigns:
+                    value = E.to_python(assigns[f.name], names, agg)
+                elif f.auto_user:
+                    value = 'ctx["user"]["id"]'
+                elif f.auto and f.type == "id":
+                    value = "str(uuid.uuid4())"
+                elif f.auto and f.type == "timestamp":
+                    value = "_now()"
+                else:
+                    value = repr(f.default)
+                row_items.append(f"{f.name!r}: {value}")
+            row_var = f"_row{i}"
+            lines.append(f"        {row_var} = {{" + ", ".join(row_items) + "}")
+            _emit_field_requires_indented(lines, ent, row_var)
+            _emit_ref_checks(lines, app, ent, row_var)
+            cols = ", ".join(f.name for f in ent.fields)
+            marks = ", ".join("?" for _ in ent.fields)
+            params = ", ".join(f"{row_var}[{f.name!r}]" for f in ent.fields)
+            lines.append("        try:")
+            lines.append(f'            conn.execute("INSERT INTO {table} ({cols}) VALUES ({marks})", ({params},))')
+            lines.append("        except sqlite3.IntegrityError as err:")
+            lines.append("            raise ContractViolation('unique constraint violated: ' + str(err))")
+            lines.append(f'        _res{i} = conn.execute("SELECT * FROM {table} WHERE id = ?", ({row_var}["id"],)).fetchone()')
+            if eff.bind_as:
+                names[eff.bind_as] = f"_res{i}"
+            last_result, last_current = f"_res{i}", None
+        elif isinstance(eff, Update):
+            id_py = E.to_python(eff.id_expr, names, agg)
+            lines.append(f'        _cur{i} = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
+            lines.append(f"        if _cur{i} is None:")
+            lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
+            if single:
+                _emit_owner_check(lines, owner_rules, action.allows, action.name, f"_cur{i}")
+            unames = dict(names)
+            unames["current"] = f"_cur{i}"
+            assigned = set()
+            update_items = []
+            for fname, expr, _src in eff.assigns:
+                update_items.append(f"{fname!r}: {E.to_python(expr, unames, agg)}")
+                assigned.add(fname)
+            upd_var = f"_upd{i}"
+            lines.append(f"        {upd_var} = {{" + ", ".join(update_items) + "}")
+            _emit_field_requires_indented(lines, ent, upd_var, assigned)
+            _emit_ref_checks(lines, app, ent, upd_var, assigned)
+            set_clause = ", ".join(f"{fname} = ?" for fname, _, _ in eff.assigns)
+            set_params = ", ".join(f"{upd_var}[{fname!r}]" for fname, _, _ in eff.assigns)
+            lines.append("        try:")
+            lines.append(f'            conn.execute("UPDATE {table} SET {set_clause} WHERE id = ?", ({set_params}, {id_py}))')
+            lines.append("        except sqlite3.IntegrityError as err:")
+            lines.append("            raise ContractViolation('unique constraint violated: ' + str(err))")
+            lines.append(f'        _res{i} = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
+            if eff.bind_was:
+                names[eff.bind_was] = f"_cur{i}"
+            if eff.bind_as:
+                names[eff.bind_as] = f"_res{i}"
+            last_result, last_current = f"_res{i}", f"_cur{i}"
+        else:  # Delete
+            id_py = E.to_python(eff.id_expr, names, agg)
+            lines.append(f'        _cur{i} = conn.execute("SELECT * FROM {table} WHERE id = ?", ({id_py},)).fetchone()')
+            lines.append(f"        if _cur{i} is None:")
+            lines.append(f"            raise ContractViolation('no {ent.name} with id ' + str({id_py}))")
+            if single:
+                _emit_owner_check(lines, owner_rules, action.allows, action.name, f"_cur{i}")
+            ref_children = [(child, f) for child in app.entities for f in child.fields if f.type == "ref" and f.ref_entity == ent.name]
+            for child, f in ref_children:  # all restrict checks before any cascade deletes
+                if f.on_delete == "restrict":
+                    lines.append(f'        if conn.execute("SELECT 1 FROM {table_name(child.name)} WHERE {f.name} = ?", ({id_py},)).fetchone() is not None:')
+                    lines.append(f"            raise ContractViolation('cannot delete {ent.name} ' + str({id_py}) + ': referenced by {child.name}.{f.name}')")
+            for child, f in ref_children:
+                if f.on_delete == "cascade":
+                    lines.append(f'        conn.execute("DELETE FROM {table_name(child.name)} WHERE {f.name} = ?", ({id_py},))')
+            lines.append(f'        conn.execute("DELETE FROM {table} WHERE id = ?", ({id_py},))')
+            if eff.bind_was:
+                names[eff.bind_was] = f"_cur{i}"
+            last_result, last_current = None, f"_cur{i}"
+
+    ensure_names = dict(names)
+    if last_result is not None:
+        ensure_names["result"] = last_result
+    if last_current is not None:
+        ensure_names["current"] = last_current
+
+    for expr, src in action.ensures:
+        cond = E.to_python(expr, ensure_names, agg)
+        lines.append(f"        if not {cond}:")
+        lines.append("            conn.rollback()")
+        lines.append(f"            raise EnsuresViolation('ensures failed: ' + {src!r})")
+
+    lines.append("        conn.commit()")
+    return_value = last_result if last_result is not None else '{"ok": True}'
+    lines.append(f"        return {return_value}")
     lines.append("    finally:")
     lines.append("        conn.close()")
-
-    ensure_names = dict(inames)
-    ensure_names["result"] = "result"
-    if isinstance(action.effect, (Update, Delete)):
-        ensure_names["current"] = "current"
-    for expr, src in action.ensures:
-        cond = E.to_python(expr, ensure_names)
-        lines.append(f"    if not {cond}:")
-        lines.append(f"        raise EnsuresViolation('ensures failed: ' + {src!r})")
-
-    lines.append("    return result")
     return lines
 
 
@@ -219,7 +254,8 @@ def _emit_query(app: App, query) -> list:
         names["@user"] = 'ctx["user"]["id"]'
         for iname, _ in query.inputs:
             names[iname] = f"inp[{iname!r}]"
-        cond = E.to_python(query.where, names)
+        cond = E.to_python(query.where, names, _agg_resolver(app))
+        lines.append("    _aggconn = None")  # filtering runs post-close; aggregates open their own conn
         lines.append(f"    rows = [row for row in rows if {cond}]")
     lines.append("    return rows")
     return lines
@@ -269,6 +305,30 @@ def emit_python(app: App, header: str) -> str:
     out.append("")
     out.append("def _now():")
     out.append('    return datetime.now(timezone.utc).isoformat()')
+    out.append("")
+    out.append("")
+    out.append("def _agg_count(conn, table, pred):")
+    out.append('    """(count Entity pred?) — rows matching pred. conn=None opens its own."""')
+    out.append("    own = conn is None")
+    out.append("    if own:")
+    out.append("        conn = _db()")
+    out.append("    try:")
+    out.append('        return sum(1 for _r in conn.execute("SELECT * FROM " + table).fetchall() if pred(_r))')
+    out.append("    finally:")
+    out.append("        if own:")
+    out.append("            conn.close()")
+    out.append("")
+    out.append("")
+    out.append("def _agg_sum(conn, table, field, pred):")
+    out.append('    """(sum Entity field pred?) — sum of field over matching rows."""')
+    out.append("    own = conn is None")
+    out.append("    if own:")
+    out.append("        conn = _db()")
+    out.append("    try:")
+    out.append('        return sum(_r[field] for _r in conn.execute("SELECT * FROM " + table).fetchall() if pred(_r))')
+    out.append("    finally:")
+    out.append("        if own:")
+    out.append("            conn.close()")
     out.append("")
     out.append("")
     out.append("def _coerce_text(name, value):")
@@ -423,7 +483,7 @@ def emit_python(app: App, header: str) -> str:
     out.append("")
     out.append("")
     out.append("class Handler(BaseHTTPRequestHandler):")
-    out.append("    server_version = 'miura/0.4'")
+    out.append("    server_version = 'miura/0.6'")
     out.append("")
     out.append("    def _send_json(self, status, payload, extra_headers=()):")
     out.append("        body = json.dumps(payload).encode('utf-8')")

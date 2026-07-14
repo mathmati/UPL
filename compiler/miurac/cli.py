@@ -17,7 +17,7 @@ from .model import BundleError, load
 from .runner import run_tests
 from .sexpr import ParseError, dumps, parse
 
-VERSION = "0.3"
+VERSION = "0.6"
 
 
 def _load_file(path: str):
